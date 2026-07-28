@@ -24,7 +24,7 @@ cl /nologo /std:c++20 /W4 /permissive- /utf-8 /EHsc /MT /O2 ^
    /I src /I resources ^
    tests\selection_test.cpp src\CaptionView.cpp ^
    /Fo"%OBJDIR%\\" /Fe"build\selection_test.exe" ^
-   /link user32.lib gdi32.lib d2d1.lib dwrite.lib ole32.lib
+   /link user32.lib gdi32.lib d2d1.lib dwrite.lib ole32.lib uxtheme.lib
 if errorlevel 1 (
     popd
     exit /b 1

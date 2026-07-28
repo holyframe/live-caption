@@ -1,6 +1,7 @@
 #include "CaptionView.h"
 
 #include <windowsx.h>
+#include <uxtheme.h>
 
 #include <algorithm>
 #include <cmath>
@@ -15,7 +16,7 @@ constexpr const wchar_t* kClassName = L"LiveCaptionViewPane";
 // Colours sampled to match the dark caption pane in the reference design.
 constexpr D2D1_COLOR_F kBackground = {43.0f / 255.0f, 43.0f / 255.0f, 43.0f / 255.0f, 1.0f};
 constexpr D2D1_COLOR_F kForeground = {228.0f / 255.0f, 228.0f / 255.0f, 228.0f / 255.0f, 1.0f};
-constexpr D2D1_COLOR_F kSelection  = {38.0f / 255.0f, 79.0f / 255.0f, 120.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kSelection  = {88.0f / 255.0f, 88.0f / 255.0f, 88.0f / 255.0f, 1.0f};
 constexpr D2D1_COLOR_F kGutterHover = {55.0f / 255.0f, 55.0f / 255.0f, 55.0f / 255.0f, 1.0f};
 
 // Left strip is the line-select gutter; a modest right margin keeps glyphs off
@@ -63,6 +64,9 @@ bool CaptionView::Create(HWND parent, HINSTANCE instance, int controlId) {
 
     m_dpi = ::GetDpiForWindow(m_hwnd);
     if (m_dpi == 0) m_dpi = 96;
+    // DarkMode_Explorer paints the WS_VSCROLL bar to match the dark pane;
+    // without it the system keeps the light classic thumb.
+    ::SetWindowTheme(m_hwnd, L"DarkMode_Explorer", nullptr);
     return EnsureDeviceResources();
 }
 

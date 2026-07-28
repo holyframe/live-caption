@@ -368,7 +368,7 @@ void MainWindow::ApplyDarkTheme() {
     EnsureThemeBrushes();
 
     const HWND explorer[] = {m_pressEnterCheck, m_copyLiveCheck, m_hintLabel, m_sidePanel,
-                             m_statusBar};
+                             m_statusBar, m_view.Handle()};
     for (HWND control : explorer) TryDarkControlTheme(control, L"DarkMode_Explorer");
 
     const HWND combos[] = {m_fontCombo, m_sizeCombo, m_spacingCombo};
