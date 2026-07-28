@@ -5,6 +5,7 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <cstring>
 #include <set>
 
 #include "Util.h"
