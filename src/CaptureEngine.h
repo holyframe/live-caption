@@ -32,7 +32,7 @@ public:
 
     // `notifyWindow` receives WM_APP_CAPTION_UPDATE / WM_APP_STATUS /
     // WM_APP_SOURCE_CHANGED.
-    bool Start(HWND notifyWindow, const std::wstring& transcriptPath);
+    bool Start(HWND notifyWindow, const std::wstring& transcriptPath, int pollIntervalMs);
     void Stop();
 
     bool IsRunning() const { return m_running.load(std::memory_order_acquire); }
@@ -46,15 +46,17 @@ private:
     bool AwaitChange();
     void PostStatus(const std::wstring& text);
 
-    // Safety net only: UI Automation change notifications normally wake the
-    // thread far sooner than this, but a provider that fails to raise events
-    // still gets picked up promptly.
-    static constexpr DWORD kPollIntervalMs = 40;
-    static constexpr DWORD kSearchIntervalMs = 500;
-    // Floor between consecutive reads, so a chatty provider cannot spin the
-    // thread. Small enough to stay imperceptible.
-    static constexpr DWORD kMinReadIntervalMs = 5;
+    // Measured: Windows 11 Live captions accepts a change subscription but never
+    // raises an event, so polling is not a fallback there, it is the mechanism.
+    // The interval is therefore configurable and tight by default.
+    static constexpr DWORD kDefaultPollIntervalMs = 8;
+    static constexpr DWORD kSearchIntervalMs = 100;
+    // Floor between consecutive reads, so a provider that does raise events
+    // rapidly cannot spin the thread.
+    static constexpr DWORD kMinReadIntervalMs = 2;
 
+    DWORD              m_pollIntervalMs = kDefaultPollIntervalMs;
+    bool               m_sawChangeEvent = false;
     std::thread        m_thread;
     HANDLE             m_stopEvent = nullptr;
     HANDLE             m_changeEvent = nullptr;

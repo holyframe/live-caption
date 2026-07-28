@@ -13,7 +13,7 @@
 namespace {
 
 constexpr const wchar_t* kClassName = L"LiveCaptionViewMain";
-constexpr const wchar_t* kBaseTitle = L"Live Caption View";
+constexpr const wchar_t* kBaseTitle = L"Live Caption App";
 
 // Unscaled (96 dpi) toolbar geometry.
 constexpr int kBarHeight    = 58;
@@ -100,7 +100,7 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             ApplyTypography();
             ApplyViewMode();
 
-            m_engine.Start(m_hwnd, m_settings.ResolvedTranscriptPath());
+            m_engine.Start(m_hwnd, m_settings.ResolvedTranscriptPath(), m_settings.pollIntervalMs);
             SetStatus(std::wstring(L"Saving transcript to ") + m_settings.ResolvedTranscriptPath());
             return 0;
         }

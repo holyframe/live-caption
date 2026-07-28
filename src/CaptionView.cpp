@@ -318,6 +318,11 @@ void CaptionView::ApplyUpdate(size_t firstDirtyLine, std::vector<std::wstring> l
         UpdateScrollBar();
         ::InvalidateRect(m_hwnd, nullptr, FALSE);
     }
+
+    // Paint now rather than when the message queue next runs dry. WM_PAINT is
+    // the lowest-priority message there is, so leaving it to be delivered
+    // normally can hold a finished caption off the screen for another frame.
+    ::UpdateWindow(m_hwnd);
 }
 
 void CaptionView::Clear() {

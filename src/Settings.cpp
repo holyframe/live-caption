@@ -58,6 +58,9 @@ void Settings::Load() {
 
     transcriptPath = ReadString(L"TranscriptPath", L"", file);
 
+    pollIntervalMs = ReadInt(L"PollIntervalMs", pollIntervalMs, file);
+    if (pollIntervalMs < 1 || pollIntervalMs > 1000) pollIntervalMs = 8;
+
     hotkeyModifiers  = static_cast<unsigned>(ReadInt(L"HotkeyModifiers", static_cast<int>(hotkeyModifiers), file));
     hotkeyVirtualKey = static_cast<unsigned>(ReadInt(L"HotkeyVirtualKey", static_cast<int>(hotkeyVirtualKey), file));
 
@@ -82,6 +85,7 @@ void Settings::Save() const {
     WriteInt(L"CompactView", compactView ? 1 : 0, file);
     WriteInt(L"AlwaysOnTop", alwaysOnTop ? 1 : 0, file);
     WriteString(L"TranscriptPath", transcriptPath, file);
+    WriteInt(L"PollIntervalMs", pollIntervalMs, file);
 
     WriteInt(L"HotkeyModifiers", static_cast<int>(hotkeyModifiers), file);
     WriteInt(L"HotkeyVirtualKey", static_cast<int>(hotkeyVirtualKey), file);

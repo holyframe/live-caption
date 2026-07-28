@@ -6,9 +6,13 @@
 
 CaptureEngine::~CaptureEngine() { Stop(); }
 
-bool CaptureEngine::Start(HWND notifyWindow, const std::wstring& transcriptPath) {
+bool CaptureEngine::Start(HWND notifyWindow, const std::wstring& transcriptPath,
+                          int pollIntervalMs) {
     if (m_running.load(std::memory_order_acquire)) return true;
 
+    m_pollIntervalMs = (pollIntervalMs >= 1 && pollIntervalMs <= 1000)
+                           ? static_cast<DWORD>(pollIntervalMs)
+                           : kDefaultPollIntervalMs;
     m_notifyWindow = notifyWindow;
     m_stopEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);   // manual reset
     m_changeEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);  // auto reset
@@ -46,12 +50,18 @@ bool CaptureEngine::Sleep(DWORD milliseconds) {
 
 bool CaptureEngine::AwaitChange() {
     const HANDLE handles[2] = {m_stopEvent, m_changeEvent};
-    const DWORD result = ::WaitForMultipleObjects(2, handles, FALSE, kPollIntervalMs);
+    const DWORD result = ::WaitForMultipleObjects(2, handles, FALSE, m_pollIntervalMs);
     if (result == WAIT_OBJECT_0) return false;  // stop requested
 
     if (result == WAIT_OBJECT_0 + 1) {
-        // Woken by a change notification. Rate-limit so a provider that raises
-        // events very rapidly cannot monopolise the thread.
+        // A provider that really does raise events lets us skip the poll wait.
+        // Report it the first time, since accepting a subscription turned out to
+        // be no guarantee that anything is ever delivered.
+        if (!m_sawChangeEvent) {
+            m_sawChangeEvent = true;
+            PostStatus(L"Source is pushing live change notifications.");
+        }
+        // Rate-limit so a very chatty provider cannot monopolise the thread.
         if (!Sleep(kMinReadIntervalMs)) return false;
     }
     return true;
@@ -95,11 +105,13 @@ void CaptureEngine::Run(std::wstring transcriptPath) {
                 lastKind = m_source.Kind();
                 m_sourceWindow.store(m_source.SourceWindow(), std::memory_order_release);
 
-                // Push notifications remove the poll interval from the latency
-                // budget; the timed poll stays on purely as a fallback.
-                const bool live = m_source.SubscribeToChanges(m_changeEvent);
+                // Subscribe opportunistically, but do not advertise "live
+                // updates" on the strength of it: Windows 11 Live captions
+                // accepts the subscription and then never raises an event. The
+                // status only claims push once one actually arrives.
+                m_source.SubscribeToChanges(m_changeEvent);
                 PostStatus(std::wstring(L"Connected to ") + SourceKindName(lastKind) +
-                           (live ? L" \u2014 live updates" : L" \u2014 polling"));
+                           L" \u2014 reading every " + std::to_wstring(m_pollIntervalMs) + L" ms");
                 if (m_notifyWindow) {
                     ::PostMessageW(m_notifyWindow, WM_APP_SOURCE_CHANGED,
                                    static_cast<WPARAM>(lastKind),

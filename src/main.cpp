@@ -18,7 +18,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
     int exitCode = 0;
     {
         if (!MainWindow::RegisterWindowClass(instance)) {
-            ::MessageBoxW(nullptr, L"Failed to register the window class.", L"Live Caption View",
+            ::MessageBoxW(nullptr, L"Failed to register the window class.", L"Live Caption App",
                           MB_ICONERROR | MB_OK);
             ::CoUninitialize();
             return 1;
@@ -26,7 +26,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
 
         MainWindow window;
         if (!window.Create(instance, showCommand)) {
-            ::MessageBoxW(nullptr, L"Failed to create the main window.", L"Live Caption View",
+            ::MessageBoxW(nullptr, L"Failed to create the main window.", L"Live Caption App",
                           MB_ICONERROR | MB_OK);
             ::CoUninitialize();
             return 1;

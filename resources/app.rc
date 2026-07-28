@@ -17,11 +17,11 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "Live Caption View"
+            VALUE "FileDescription", "Live Caption App"
             VALUE "FileVersion",     "1.0.0.0"
             VALUE "InternalName",    "LiveCaptionView"
             VALUE "OriginalFilename","LiveCaptionView.exe"
-            VALUE "ProductName",     "Live Caption View"
+            VALUE "ProductName",     "Live Caption App"
             VALUE "ProductVersion",  "1.0.0.0"
         END
     END

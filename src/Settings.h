@@ -13,6 +13,14 @@ struct Settings {
     bool         alwaysOnTop  = false;
     std::wstring transcriptPath;   // empty means "captions.txt" beside the exe
 
+    // How often the caption source is re-read, in milliseconds.
+    //
+    // This is the dominant source of client-side lag, because Windows 11 Live
+    // captions accepts a UI Automation change subscription but never actually
+    // raises an event, leaving polling as the only mechanism that works. A read
+    // costs about 0.4 ms, so a tight interval is affordable.
+    int pollIntervalMs = 8;
+
     // Global show/hide hotkey.
     //
     // Windows rejects RegisterHotKey for a bare Shift+<letter> combination, so

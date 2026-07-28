@@ -1,4 +1,4 @@
-# Live Caption View
+# Live Caption App
 
 A native Windows app that reads the live captions produced by **Google Chrome's
 Live Caption** *and* **Windows 11's built-in Live captions**, reassembles them
@@ -69,8 +69,9 @@ actually got in the title bar.
 ## Settings
 
 Preferences live in `LiveCaptionView.ini` next to the executable: font, size,
-line spacing, checkbox states, window position, hotkey, and `TranscriptPath`
-(blank means `captions.txt` beside the executable).
+line spacing, checkbox states, window position, hotkey, `TranscriptPath` (blank
+means `captions.txt` beside the executable), and `PollIntervalMs` (how often the
+caption source is re-read; default 8, see [Staying real-time](#staying-real-time)).
 
 ## How it works
 
@@ -88,17 +89,28 @@ MainWindow (UI thread, COM STA)
 
 ### Staying real-time
 
-Captions arrive by **push, not poll**. On attaching, the app subscribes to UI
-Automation's `TextChanged` event plus `Name`/`Value` property-change
-notifications, and the callback simply signals the capture thread. Latency is
-therefore however long the provider takes to raise the event, rather than up to a
-full poll interval. The status bar shows `live updates` when the subscription
-succeeded, or `polling` if the provider refused it.
+**Windows 11 Live captions accepts a UI Automation change subscription and then
+never raises an event.** `tests\latency_probe.bat` measures this directly: over
+12 seconds of continuous speech it recorded 49 text changes and 0 notifications.
+Polling is therefore not a fallback for that source, it is the only mechanism
+that works, and the poll interval is the entire client-side latency budget.
 
-A 40 ms timed poll remains purely as a fallback for providers that do not raise
-events. Because the wake-up event is auto-reset, a burst of notifications
-coalesces into a single read, and a 5 ms floor between reads stops an unusually
-chatty provider from monopolising the thread.
+The app still subscribes to `TextChanged` and `Name`/`Value` property changes,
+because providers that do honour them let the capture thread skip its wait
+entirely. But the status bar no longer claims `live updates` on the strength of
+the subscription being accepted; it reports the poll interval, and only says the
+source is pushing notifications once one has actually arrived.
+
+The default interval is **8 ms**, overridable with `PollIntervalMs` in the INI. A
+read costs about 0.4 ms against a 2.2 KB buffer, so the tight interval is
+affordable: measured cost during continuous captioning is under 2% of one core.
+A 2 ms floor between reads stops a genuinely chatty provider from spinning the
+thread.
+
+On the UI side, an applied update calls `UpdateWindow` rather than leaving the
+repaint to arrive as a normal `WM_PAINT`. `WM_PAINT` is the lowest-priority
+message there is, so waiting for the queue to run dry can hold a finished caption
+off the screen for an extra frame.
 
 Each read costs one or two cross-process calls, because the working accessor
 (`TextPattern`, `ValuePattern` or `Name`) is identified once at attach time and
