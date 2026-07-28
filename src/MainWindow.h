@@ -44,8 +44,6 @@ private:
     void OnCommand(int controlId, int notifyCode);
     void OnSend();
     void OnCopy();
-    void OnFrontAll();
-    void OnMinimizeAll();
     void OnCaptionUpdate(CaptionUpdate* update);
     void MaybeCopyRealtime();
     void DrainPendingPayloads();
@@ -63,14 +61,9 @@ private:
     HWND m_sendButton = nullptr;
     HWND m_pressEnterCheck = nullptr;
     HWND m_hintLabel = nullptr;
-    HWND m_viewModeButton = nullptr;
     HWND m_fontCombo = nullptr;
     HWND m_sizeCombo = nullptr;
     HWND m_spacingCombo = nullptr;
-    HWND m_copyLiveCheck = nullptr;
-    HWND m_frontAllButton = nullptr;
-    HWND m_minimizeAllButton = nullptr;
-    HWND m_copyButton = nullptr;
     HWND m_rightPanel = nullptr;
     HWND m_bottomPanel = nullptr;
     HWND m_statusBar = nullptr;
@@ -91,6 +84,5 @@ private:
     CaptureEngine m_engine;
     Settings      m_settings;
 
-    HWND      m_sourceWindow = nullptr;
     ULONGLONG m_lastRealtimeCopyTick = 0;
 };

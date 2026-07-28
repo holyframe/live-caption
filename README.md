@@ -46,20 +46,15 @@ attached and where the transcript is being written.
 
 Drag the divider between the caption pane and the bottom panel to give the
 captions more or less room; the pane keeps at least 80px and the bottom panel
-keeps enough height for its two rows of controls. Those rows stay at the foot of
-the panel, so the space a drag opens up lands under the divider and the controls
+keeps enough height for its toolbar row. That row stays at the foot of the
+panel, so the space a drag opens up lands under the divider and the controls
 do not move. The position is remembered across runs as `BottomPanelHeight`.
 
 | Control | Behaviour |
 | --- | --- |
 | **Send** | Placeholder — deliberately does nothing yet. |
 | **Press Enter** | When checked, Enter triggers Send. |
-| **Normal View / Compact View** | Toggles a borderless always-on-top mode. The toolbar stays visible so you can switch back. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
-| **Copy real-time if this window is active** | Keeps the clipboard in sync with the transcript while this window is focused, throttled to once every 600 ms. Pauses while you are holding a selection, so it cannot overwrite it. |
-| **Front all** | Brings both this window and the caption source forward. |
-| **Minimize all** | Minimises both. |
-| **Copy** | Copies the selection if there is one, otherwise the whole visible transcript. |
 | Double-click empty pane space | Same as Send. |
 | **Ctrl+Shift+Z** | Global hotkey that shows/hides the window. |
 

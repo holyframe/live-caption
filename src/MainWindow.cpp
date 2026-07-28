@@ -17,7 +17,7 @@ constexpr const wchar_t* kClassName = L"LiveCaptionViewMain";
 constexpr const wchar_t* kBaseTitle = L"Live Caption App";
 
 // Unscaled (96 dpi) toolbar geometry.
-constexpr int kBarHeight    = 58;
+constexpr int kBarHeight    = 38;
 constexpr int kPad          = 8;
 constexpr int kRowHeight    = 23;
 constexpr int kGap          = 6;
@@ -281,7 +281,6 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         }
 
         case WM_APP_SOURCE_CHANGED:
-            m_sourceWindow = reinterpret_cast<HWND>(lParam);
             return 0;
 
         case WM_SETFOCUS:
@@ -371,13 +370,8 @@ bool MainWindow::CreateChildren() {
                                  nullptr);
     };
 
-    m_sendButton        = button(L"Send", IDC_BTN_SEND);
-    m_pressEnterCheck   = check(L"Press Enter", IDC_CHK_PRESS_ENTER);
-    m_viewModeButton    = button(L"Normal View", IDC_BTN_VIEW_MODE);
-    m_frontAllButton    = button(L"Front all", IDC_BTN_FRONT_ALL);
-    m_minimizeAllButton = button(L"Minimize all", IDC_BTN_MINIMIZE_ALL);
-    m_copyButton        = button(L"Copy", IDC_BTN_COPY);
-    m_copyLiveCheck     = check(L"Copy real-time if this window is active", IDC_CHK_COPY_LIVE);
+    m_sendButton      = button(L"Send", IDC_BTN_SEND);
+    m_pressEnterCheck = check(L"Press Enter", IDC_CHK_PRESS_ENTER);
 
     m_hintLabel = ::CreateWindowExW(0, WC_STATICW, L"Double-click empty area to send",
                                     WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_RIGHT, 0, 0, 10,
@@ -401,7 +395,6 @@ bool MainWindow::CreateChildren() {
     if (!m_sendButton || !m_fontCombo || !m_statusBar) return false;
 
     ::SendMessageW(m_pressEnterCheck, BM_SETCHECK, m_settings.pressEnter ? BST_CHECKED : BST_UNCHECKED, 0);
-    ::SendMessageW(m_copyLiveCheck, BM_SETCHECK, m_settings.copyRealtime ? BST_CHECKED : BST_UNCHECKED, 0);
 
     PopulateFontCombo();
     PopulateSizeCombo();
@@ -444,8 +437,8 @@ void MainWindow::DiscardThemeBrushes() {
 void MainWindow::ApplyDarkTheme() {
     EnsureThemeBrushes();
 
-    const HWND explorer[] = {m_pressEnterCheck, m_copyLiveCheck, m_hintLabel, m_rightPanel,
-                             m_bottomPanel,     m_statusBar,     m_view.Handle()};
+    const HWND explorer[] = {m_pressEnterCheck, m_hintLabel, m_rightPanel,
+                             m_bottomPanel,     m_statusBar, m_view.Handle()};
     for (HWND control : explorer) TryDarkControlTheme(control, L"DarkMode_Explorer");
 
     const HWND combos[] = {m_fontCombo, m_sizeCombo, m_spacingCombo};
@@ -464,8 +457,7 @@ LRESULT MainWindow::OnCtlColor(HDC dc, HWND control) {
     const bool isHint = control == m_hintLabel;
     // The panels, and the controls that sit on the bottom panel, share its fill.
     const bool onPanel = control == m_rightPanel || control == m_bottomPanel ||
-                         control == m_hintLabel || control == m_pressEnterCheck ||
-                         control == m_copyLiveCheck;
+                         control == m_hintLabel || control == m_pressEnterCheck;
     const COLORREF text = isHint ? kTextSecondary : kTextPrimary;
     const COLORREF background = onPanel ? kPanelBg : kWindowBg;
     const HBRUSH brush = onPanel ? m_panelBrush : m_windowBrush;
@@ -525,10 +517,8 @@ void MainWindow::ApplyControlFont() {
         m_controlFont = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
     }
 
-    const HWND controls[] = {m_sendButton,     m_pressEnterCheck,   m_hintLabel,
-                             m_viewModeButton, m_fontCombo,         m_sizeCombo,
-                             m_spacingCombo,   m_copyLiveCheck,     m_frontAllButton,
-                             m_minimizeAllButton, m_copyButton,     m_statusBar};
+    const HWND controls[] = {m_sendButton, m_pressEnterCheck, m_hintLabel, m_fontCombo,
+                             m_sizeCombo,  m_spacingCombo,    m_statusBar};
     for (HWND control : controls) {
         if (control) ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(m_controlFont), TRUE);
     }
@@ -591,8 +581,8 @@ void MainWindow::DrawSplitter(HDC dc) const {
     ::FillRect(dc, &line, m_splitterBrush);
 }
 
-// Keeps the bottom panel tall enough for its two rows and short enough to leave
-// a usable caption pane, whatever the window has been resized to.
+// Keeps the bottom panel tall enough for its toolbar row and short enough to
+// leave a usable caption pane, whatever the window has been resized to.
 int MainWindow::ClampBottomPanelHeight(int wanted, int clientHeight) const {
     const int minimum = Scaled(kBarHeight);
     const int available =
@@ -668,24 +658,21 @@ void MainWindow::Layout() {
                        SWP_NOACTIVATE);
     }
 
-    // The rows hug the foot of the bottom panel. A taller panel then opens
+    // The toolbar hugs the foot of the bottom panel. A taller panel then opens
     // space under the splitter rather than carrying the controls up with it, so
     // they stay under the pointer while the caption pane is being resized.
-    const int rowsHeight = rowHeight * 2 + Scaled(3);
-    const int row1Top = std::max(logTop - Scaled(5) - rowsHeight, barTop + Scaled(4));
-    const int row2Top = row1Top + rowHeight + Scaled(3);
+    const int rowTop = std::max(logTop - Scaled(5) - rowHeight, barTop + Scaled(4));
 
-    // Left block: a tall Send button with the Press Enter option beside it.
+    // Left block: Send with the Press Enter option beside it.
     int left = pad;
-    ::SetWindowPos(m_sendButton, nullptr, left, row1Top, Scaled(kSendWidth), rowsHeight,
+    ::SetWindowPos(m_sendButton, nullptr, left, rowTop, Scaled(kSendWidth), rowHeight,
                    SWP_NOZORDER | SWP_NOACTIVATE);
     left += Scaled(kSendWidth) + gap;
-    ::SetWindowPos(m_pressEnterCheck, nullptr, left, row1Top + (rowsHeight - rowHeight) / 2,
-                   Scaled(96), rowHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+    ::SetWindowPos(m_pressEnterCheck, nullptr, left, rowTop, Scaled(96), rowHeight,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
     const int leftBlockEnd = left + Scaled(96) + gap;
 
-    // Right blocks are laid out from the right edge inwards, mirroring the
-    // reference design's ordering.
+    // Right blocks are laid out from the right edge inwards.
     auto placeRight = [&](HWND control, int& cursor, int top, int width, int height) {
         cursor -= width;
         ::SetWindowPos(control, nullptr, cursor, top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -693,20 +680,11 @@ void MainWindow::Layout() {
     };
 
     int cursor = columnWidth - pad;
-    placeRight(m_spacingCombo, cursor, row1Top, Scaled(62), rowHeight);
-    placeRight(m_sizeCombo, cursor, row1Top, Scaled(62), rowHeight);
-    placeRight(m_fontCombo, cursor, row1Top, Scaled(140), rowHeight);
-    placeRight(m_viewModeButton, cursor, row1Top, Scaled(96), rowHeight);
+    placeRight(m_spacingCombo, cursor, rowTop, Scaled(62), rowHeight);
+    placeRight(m_sizeCombo, cursor, rowTop, Scaled(62), rowHeight);
+    placeRight(m_fontCombo, cursor, rowTop, Scaled(140), rowHeight);
     const int hintWidth = std::max(cursor - leftBlockEnd, 0);
-    ::SetWindowPos(m_hintLabel, nullptr, leftBlockEnd, row1Top + Scaled(4), hintWidth, rowHeight,
-                   SWP_NOZORDER | SWP_NOACTIVATE);
-
-    cursor = columnWidth - pad;
-    placeRight(m_copyButton, cursor, row2Top, Scaled(70), rowHeight);
-    placeRight(m_minimizeAllButton, cursor, row2Top, Scaled(90), rowHeight);
-    placeRight(m_frontAllButton, cursor, row2Top, Scaled(76), rowHeight);
-    const int checkWidth = std::max(cursor - leftBlockEnd, Scaled(120));
-    ::SetWindowPos(m_copyLiveCheck, nullptr, leftBlockEnd, row2Top, checkWidth, rowHeight,
+    ::SetWindowPos(m_hintLabel, nullptr, leftBlockEnd, rowTop + Scaled(4), hintWidth, rowHeight,
                    SWP_NOZORDER | SWP_NOACTIVATE);
 
     ::InvalidateRect(m_hwnd, nullptr, TRUE);
@@ -776,7 +754,6 @@ void MainWindow::ApplyViewMode() {
         ::SetWindowPos(m_hwnd, m_settings.compactView ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
                        SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
     }
-    ::SetWindowTextW(m_viewModeButton, m_settings.compactView ? L"Compact View" : L"Normal View");
     Layout();
 }
 
@@ -800,25 +777,8 @@ void MainWindow::OnCommand(int controlId, int notifyCode) {
                 ::SendMessageW(m_pressEnterCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
             return;
 
-        case IDC_CHK_COPY_LIVE:
-            m_settings.copyRealtime =
-                ::SendMessageW(m_copyLiveCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
-            return;
-
-        case IDC_BTN_VIEW_MODE:
-            m_settings.compactView = !m_settings.compactView;
-            ApplyViewMode();
-            return;
-
-        case IDC_BTN_FRONT_ALL:
-            OnFrontAll();
-            return;
-
-        case IDC_BTN_MINIMIZE_ALL:
-            OnMinimizeAll();
-            return;
-
         case IDC_BTN_COPY:
+            // Still used by the caption pane (Ctrl+C / context menu).
             OnCopy();
             return;
 
@@ -888,23 +848,6 @@ void MainWindow::OnCopy() {
     } else {
         SetStatus(L"Could not open the clipboard.");
     }
-}
-
-void MainWindow::OnFrontAll() {
-    if (m_sourceWindow && ::IsWindow(m_sourceWindow)) {
-        if (::IsIconic(m_sourceWindow)) ::ShowWindow(m_sourceWindow, SW_RESTORE);
-        ::SetWindowPos(m_sourceWindow, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    }
-    if (::IsIconic(m_hwnd)) ::ShowWindow(m_hwnd, SW_RESTORE);
-    ::ShowWindow(m_hwnd, SW_SHOW);
-    ::SetForegroundWindow(m_hwnd);
-}
-
-void MainWindow::OnMinimizeAll() {
-    if (m_sourceWindow && ::IsWindow(m_sourceWindow) && !::IsIconic(m_sourceWindow)) {
-        ::ShowWindow(m_sourceWindow, SW_MINIMIZE);
-    }
-    ::ShowWindow(m_hwnd, SW_MINIMIZE);
 }
 
 void MainWindow::OnCaptionUpdate(CaptionUpdate* update) {
