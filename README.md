@@ -44,6 +44,12 @@ buttons, and a column beside it holding the caption pane, the toolbar's bottom
 panel, and the log view along the foot. The log view reports which source is
 attached and where the transcript is being written.
 
+Drag the divider between the caption pane and the bottom panel to give the
+captions more or less room; the pane keeps at least 80px and the bottom panel
+keeps enough height for its two rows of controls. Those rows stay at the foot of
+the panel, so the space a drag opens up lands under the divider and the controls
+do not move. The position is remembered across runs as `BottomPanelHeight`.
+
 | Control | Behaviour |
 | --- | --- |
 | **Send** | Placeholder — deliberately does nothing yet. |
@@ -96,7 +102,8 @@ actually got in the title bar.
 ## Settings
 
 Preferences live in `LiveCaptionView.ini` next to the executable: font, size,
-line spacing, checkbox states, window position, hotkey, `TranscriptPath` (blank
+line spacing, checkbox states, window position, `BottomPanelHeight` (where the
+caption/bottom-panel divider sits, in 96 dpi units), hotkey, `TranscriptPath` (blank
 means `captions.txt` beside the executable), and `PollIntervalMs` (how often the
 caption source is re-read; default 8, see [Staying real-time](#staying-real-time)).
 

@@ -30,7 +30,10 @@ private:
     void DiscardThemeBrushes();
     void DrawDarkButton(const DRAWITEMSTRUCT& item) const;
     LRESULT OnCtlColor(HDC dc, HWND control);
+    void DrawSplitter(HDC dc) const;
     int  LogBarHeight() const;
+    int  ClampBottomPanelHeight(int wanted, int clientHeight) const;
+    void DragSplitterTo(int splitterTop);
     void Layout();
     void UpdateHotkeyRegistration();
     void SetStatus(const std::wstring& text);
@@ -49,6 +52,7 @@ private:
 
     bool CopyTextToClipboard(const std::wstring& text);
     int  Scaled(int value) const;
+    int  Unscaled(int value) const;
 
     HWND      m_hwnd = nullptr;
     HINSTANCE m_instance = nullptr;
@@ -75,6 +79,13 @@ private:
     HBRUSH m_panelBrush = nullptr;
     HBRUSH m_buttonBrush = nullptr;
     HBRUSH m_buttonPressedBrush = nullptr;
+    HBRUSH m_splitterBrush = nullptr;
+
+    // Grab strip between the caption pane and the bottom panel. Parent area, so
+    // the drag is handled here rather than by a child control.
+    RECT m_splitterRect{};
+    bool m_splitterDrag = false;
+    int  m_splitterGrab = 0;  // cursor offset inside the strip when the drag began
 
     CaptionView   m_view;
     CaptureEngine m_engine;

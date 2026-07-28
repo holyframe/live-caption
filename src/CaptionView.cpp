@@ -571,14 +571,19 @@ void CaptionView::UpdateScrollBar() {
 }
 
 void CaptionView::OnSize() {
+    RECT rc{};
+    ::GetClientRect(m_hwnd, &rc);
     if (m_renderTarget) {
-        RECT rc{};
-        ::GetClientRect(m_hwnd, &rc);
         m_renderTarget->Resize(D2D1::SizeU(static_cast<UINT32>(std::max<LONG>(rc.right - rc.left, 1)),
                                            static_cast<UINT32>(std::max<LONG>(rc.bottom - rc.top, 1))));
     }
-    // Wrapping width changed, so every measurement is stale.
-    InvalidateAllLayouts();
+    // Only a new wrapping width makes the measurements stale. Dragging the
+    // splitter changes the height alone, which every line survives.
+    const int width = static_cast<int>(rc.right - rc.left);
+    if (width != m_measuredWidth) {
+        m_measuredWidth = width;
+        InvalidateAllLayouts();
+    }
     if (m_stickToBottom) {
         ScrollToBottom();
     } else {

@@ -68,6 +68,9 @@ void Settings::Load() {
     windowY = ReadInt(L"WindowY", windowY, file);
     windowW = ReadInt(L"WindowW", windowW, file);
     windowH = ReadInt(L"WindowH", windowH, file);
+
+    bottomPanelHeight = ReadInt(L"BottomPanelHeight", bottomPanelHeight, file);
+    if (bottomPanelHeight < 58 || bottomPanelHeight > 2000) bottomPanelHeight = 58;
 }
 
 void Settings::Save() const {
@@ -94,4 +97,5 @@ void Settings::Save() const {
     WriteInt(L"WindowY", windowY, file);
     WriteInt(L"WindowW", windowW, file);
     WriteInt(L"WindowH", windowH, file);
+    WriteInt(L"BottomPanelHeight", bottomPanelHeight, file);
 }

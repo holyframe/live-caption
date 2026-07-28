@@ -129,6 +129,7 @@ private:
 
     std::vector<Line> m_lines;
     size_t            m_lineOffset = 0;  // absolute index of m_lines[0]
+    int               m_measuredWidth = -1;  // client width the layouts were measured at
     float             m_totalHeight = -1.0f;
     float             m_scrollY = 0.0f;
     bool              m_stickToBottom = true;

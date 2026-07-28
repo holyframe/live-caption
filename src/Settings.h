@@ -33,6 +33,10 @@ struct Settings {
 
     int windowX = -1, windowY = -1, windowW = 960, windowH = 620;
 
+    // Height of the bottom panel at 96 dpi; the caption pane takes whatever the
+    // window has left over, so dragging the splitter changes this.
+    int bottomPanelHeight = 58;
+
     void Load();
     void Save() const;
 

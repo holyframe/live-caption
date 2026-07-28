@@ -26,6 +26,10 @@ constexpr int kSendWidth    = 92;
 constexpr int kRightPanelWidth = 45;
 // Fallback height for the log view when the font metrics are unavailable.
 constexpr int kLogHeight    = 22;
+// Draggable strip between the caption pane and the bottom panel, and the
+// smallest caption pane a drag may leave behind.
+constexpr int kSplitterHeight  = 6;
+constexpr int kMinViewHeight   = 80;
 
 // Dark UI palette, aligned with the caption pane.
 constexpr COLORREF kWindowBg       = RGB(32, 32, 32);
@@ -36,6 +40,7 @@ constexpr COLORREF kButtonBorder   = RGB(90, 90, 90);
 constexpr COLORREF kTextPrimary    = RGB(228, 228, 228);
 constexpr COLORREF kTextSecondary  = RGB(170, 170, 170);
 constexpr COLORREF kStatusBg       = RGB(28, 28, 28);
+constexpr COLORREF kSplitterLine   = RGB(72, 72, 72);
 
 // Throttle for "copy real-time"; the caption updates ~10x per second and we do
 // not want to thrash the clipboard that hard.
@@ -75,6 +80,10 @@ int MainWindow::Scaled(int value) const {
     return ::MulDiv(value, static_cast<int>(m_dpi), 96);
 }
 
+int MainWindow::Unscaled(int value) const {
+    return ::MulDiv(value, 96, static_cast<int>(m_dpi));
+}
+
 bool MainWindow::Create(HINSTANCE instance, int showCommand) {
     m_instance = instance;
     m_settings.Load();
@@ -84,8 +93,10 @@ bool MainWindow::Create(HINSTANCE instance, int showCommand) {
     const int x = m_settings.windowX >= 0 ? m_settings.windowX : CW_USEDEFAULT;
     const int y = m_settings.windowY >= 0 ? m_settings.windowY : CW_USEDEFAULT;
 
-    m_hwnd = ::CreateWindowExW(0, kClassName, kBaseTitle, WS_OVERLAPPEDWINDOW, x, y, width, height,
-                               nullptr, nullptr, instance, this);
+    // WS_CLIPCHILDREN keeps the background erase out of the panes, which would
+    // otherwise flicker through them on every splitter drag step.
+    m_hwnd = ::CreateWindowExW(0, kClassName, kBaseTitle, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, x,
+                               y, width, height, nullptr, nullptr, instance, this);
     if (!m_hwnd) return false;
 
     ::ShowWindow(m_hwnd, showCommand);
@@ -134,11 +145,54 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
 
         case WM_ERASEBKGND: {
             if (!m_windowBrush) EnsureThemeBrushes();
+            const HDC dc = reinterpret_cast<HDC>(wParam);
             RECT rc{};
             ::GetClientRect(m_hwnd, &rc);
-            ::FillRect(reinterpret_cast<HDC>(wParam), &rc, m_windowBrush);
+            ::FillRect(dc, &rc, m_windowBrush);
+            DrawSplitter(dc);
             return 1;
         }
+
+        case WM_SETCURSOR: {
+            POINT pt{};
+            if (LOWORD(lParam) == HTCLIENT && ::GetCursorPos(&pt) &&
+                ::ScreenToClient(m_hwnd, &pt) &&
+                (m_splitterDrag || ::PtInRect(&m_splitterRect, pt))) {
+                ::SetCursor(::LoadCursorW(nullptr, IDC_SIZENS));
+                return TRUE;
+            }
+            break;
+        }
+
+        case WM_LBUTTONDOWN: {
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (::PtInRect(&m_splitterRect, pt)) {
+                m_splitterDrag = true;
+                m_splitterGrab = pt.y - m_splitterRect.top;
+                ::SetCapture(m_hwnd);
+                return 0;
+            }
+            break;
+        }
+
+        case WM_MOUSEMOVE:
+            if (m_splitterDrag) {
+                DragSplitterTo(GET_Y_LPARAM(lParam) - m_splitterGrab);
+                return 0;
+            }
+            break;
+
+        case WM_LBUTTONUP:
+            if (m_splitterDrag) {
+                m_splitterDrag = false;
+                ::ReleaseCapture();
+                return 0;
+            }
+            break;
+
+        case WM_CAPTURECHANGED:
+            m_splitterDrag = false;
+            return 0;
 
         case WM_SIZE:
             Layout();
@@ -361,6 +415,7 @@ void MainWindow::EnsureThemeBrushes() {
     if (!m_panelBrush) m_panelBrush = ::CreateSolidBrush(kPanelBg);
     if (!m_buttonBrush) m_buttonBrush = ::CreateSolidBrush(kButtonFace);
     if (!m_buttonPressedBrush) m_buttonPressedBrush = ::CreateSolidBrush(kButtonPressed);
+    if (!m_splitterBrush) m_splitterBrush = ::CreateSolidBrush(kSplitterLine);
 }
 
 void MainWindow::DiscardThemeBrushes() {
@@ -379,6 +434,10 @@ void MainWindow::DiscardThemeBrushes() {
     if (m_buttonPressedBrush) {
         ::DeleteObject(m_buttonPressedBrush);
         m_buttonPressedBrush = nullptr;
+    }
+    if (m_splitterBrush) {
+        ::DeleteObject(m_splitterBrush);
+        m_splitterBrush = nullptr;
     }
 }
 
@@ -521,6 +580,40 @@ void MainWindow::PopulateSpacingCombo() {
     ::SendMessageW(m_spacingCombo, CB_SETCURSEL, static_cast<WPARAM>(selected), 0);
 }
 
+void MainWindow::DrawSplitter(HDC dc) const {
+    if (!m_splitterBrush || ::IsRectEmpty(&m_splitterRect)) return;
+    // A hairline down the middle of the grab strip, so the strip reads as a
+    // divider rather than as a gap.
+    const int thickness = std::max(Scaled(1), 1);
+    RECT line = m_splitterRect;
+    line.top += (line.bottom - line.top - thickness) / 2;
+    line.bottom = line.top + thickness;
+    ::FillRect(dc, &line, m_splitterBrush);
+}
+
+// Keeps the bottom panel tall enough for its two rows and short enough to leave
+// a usable caption pane, whatever the window has been resized to.
+int MainWindow::ClampBottomPanelHeight(int wanted, int clientHeight) const {
+    const int minimum = Scaled(kBarHeight);
+    const int available =
+        clientHeight - LogBarHeight() - Scaled(kSplitterHeight) - Scaled(kMinViewHeight);
+    return std::clamp(wanted, minimum, std::max(available, minimum));
+}
+
+void MainWindow::DragSplitterTo(int splitterTop) {
+    RECT client{};
+    ::GetClientRect(m_hwnd, &client);
+    const int clientHeight = client.bottom - client.top;
+
+    const int logTop = std::max(clientHeight - LogBarHeight(), 0);
+    const int wanted = logTop - splitterTop - Scaled(kSplitterHeight);
+    const int height = Unscaled(ClampBottomPanelHeight(wanted, clientHeight));
+    if (height == m_settings.bottomPanelHeight) return;
+
+    m_settings.bottomPanelHeight = height;
+    Layout();
+}
+
 int MainWindow::LogBarHeight() const {
     int height = Scaled(kLogHeight);
     if (const HDC dc = ::GetDC(m_hwnd)) {
@@ -544,16 +637,20 @@ void MainWindow::Layout() {
     const int pad = Scaled(kPad);
     const int gap = Scaled(kGap);
     const int rowHeight = Scaled(kRowHeight);
-    const int barHeight = Scaled(kBarHeight);
     const int logHeight = LogBarHeight();
+    const int splitterHeight = Scaled(kSplitterHeight);
+    const int barHeight = ClampBottomPanelHeight(Scaled(m_settings.bottomPanelHeight), clientHeight);
 
     // The right panel runs the full height of the window. Everything else
-    // stacks inside the column left of it: caption pane, bottom panel, log view.
+    // stacks inside the column left of it: caption pane, splitter, bottom
+    // panel, log view.
     const int rightPanelWidth = Scaled(kRightPanelWidth);
     const int columnWidth = std::max(clientWidth - rightPanelWidth, 0);
     const int logTop = std::max(clientHeight - logHeight, 0);
     const int barTop = std::max(logTop - barHeight, 0);
-    const int viewHeight = barTop;
+    const int viewHeight = std::max(barTop - splitterHeight, 0);
+
+    m_splitterRect = RECT{0, viewHeight, columnWidth, barTop};
 
     if (m_view.Handle()) {
         ::SetWindowPos(m_view.Handle(), nullptr, 0, 0, columnWidth, viewHeight,
@@ -571,16 +668,19 @@ void MainWindow::Layout() {
                        SWP_NOACTIVATE);
     }
 
-    const int row1Top = barTop + Scaled(4);
+    // The rows hug the foot of the bottom panel. A taller panel then opens
+    // space under the splitter rather than carrying the controls up with it, so
+    // they stay under the pointer while the caption pane is being resized.
+    const int rowsHeight = rowHeight * 2 + Scaled(3);
+    const int row1Top = std::max(logTop - Scaled(5) - rowsHeight, barTop + Scaled(4));
     const int row2Top = row1Top + rowHeight + Scaled(3);
 
     // Left block: a tall Send button with the Press Enter option beside it.
     int left = pad;
-    const int sendHeight = rowHeight * 2 + Scaled(3);
-    ::SetWindowPos(m_sendButton, nullptr, left, row1Top, Scaled(kSendWidth), sendHeight,
+    ::SetWindowPos(m_sendButton, nullptr, left, row1Top, Scaled(kSendWidth), rowsHeight,
                    SWP_NOZORDER | SWP_NOACTIVATE);
     left += Scaled(kSendWidth) + gap;
-    ::SetWindowPos(m_pressEnterCheck, nullptr, left, row1Top + (sendHeight - rowHeight) / 2,
+    ::SetWindowPos(m_pressEnterCheck, nullptr, left, row1Top + (rowsHeight - rowHeight) / 2,
                    Scaled(96), rowHeight, SWP_NOZORDER | SWP_NOACTIVATE);
     const int leftBlockEnd = left + Scaled(96) + gap;
 
