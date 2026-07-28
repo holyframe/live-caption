@@ -25,6 +25,11 @@ private:
     void PopulateSizeCombo();
     void PopulateSpacingCombo();
     void ApplyControlFont();
+    void ApplyDarkTheme();
+    void EnsureThemeBrushes();
+    void DiscardThemeBrushes();
+    void DrawDarkButton(const DRAWITEMSTRUCT& item) const;
+    LRESULT OnCtlColor(HDC dc, HWND control);
     void Layout();
     void UpdateHotkeyRegistration();
     void SetStatus(const std::wstring& text);
@@ -61,7 +66,13 @@ private:
     HWND m_frontAllButton = nullptr;
     HWND m_minimizeAllButton = nullptr;
     HWND m_copyButton = nullptr;
+    HWND m_sidePanel = nullptr;
     HWND m_statusBar = nullptr;
+
+    HBRUSH m_windowBrush = nullptr;
+    HBRUSH m_panelBrush = nullptr;
+    HBRUSH m_buttonBrush = nullptr;
+    HBRUSH m_buttonPressedBrush = nullptr;
 
     CaptionView   m_view;
     CaptureEngine m_engine;

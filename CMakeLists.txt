@@ -42,6 +42,7 @@ target_link_libraries(LiveCaptionView PRIVATE
     uuid
     dwmapi
     shlwapi
+    uxtheme
 )
 
 if(MSVC)

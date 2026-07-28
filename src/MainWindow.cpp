@@ -2,6 +2,7 @@
 
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <uxtheme.h>
 #include <windowsx.h>
 
 #include <algorithm>
@@ -21,6 +22,18 @@ constexpr int kPad          = 8;
 constexpr int kRowHeight    = 23;
 constexpr int kGap          = 6;
 constexpr int kSendWidth    = 92;
+// Strip to the right of the caption scrollbar for control buttons.
+constexpr int kSidePanelWidth = 45;
+
+// Dark UI palette, aligned with the caption pane.
+constexpr COLORREF kWindowBg       = RGB(32, 32, 32);
+constexpr COLORREF kPanelBg        = RGB(36, 36, 36);
+constexpr COLORREF kButtonFace     = RGB(55, 55, 55);
+constexpr COLORREF kButtonPressed  = RGB(70, 70, 70);
+constexpr COLORREF kButtonBorder   = RGB(90, 90, 90);
+constexpr COLORREF kTextPrimary    = RGB(228, 228, 228);
+constexpr COLORREF kTextSecondary  = RGB(170, 170, 170);
+constexpr COLORREF kStatusBg       = RGB(28, 28, 28);
 
 // Throttle for "copy real-time"; the caption updates ~10x per second and we do
 // not want to thrash the clipboard that hard.
@@ -32,6 +45,15 @@ int CALLBACK EnumFontProc(const LOGFONTW* logFont, const TEXTMETRICW*, DWORD, LP
     return 1;
 }
 
+void TryDarkControlTheme(HWND hwnd, const wchar_t* theme) {
+    if (!hwnd) return;
+    // Prefer the immersive dark control theme when the OS provides it; fall
+    // back to the classic unthemed look so WM_CTLCOLOR* can paint dark.
+    if (FAILED(::SetWindowTheme(hwnd, theme, nullptr))) {
+        ::SetWindowTheme(hwnd, L"", L"");
+    }
+}
+
 }  // namespace
 
 bool MainWindow::RegisterWindowClass(HINSTANCE instance) {
@@ -41,7 +63,7 @@ bool MainWindow::RegisterWindowClass(HINSTANCE instance) {
     wc.lpfnWndProc = &MainWindow::WndProcThunk;
     wc.hInstance = instance;
     wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = ::GetSysColorBrush(COLOR_BTNFACE);
+    wc.hbrBackground = nullptr;  // painted dark in WM_ERASEBKGND
     wc.lpszClassName = kClassName;
     wc.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);
     return ::RegisterClassExW(&wc) != 0;
@@ -88,6 +110,8 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             m_dpi = ::GetDpiForWindow(m_hwnd);
             if (m_dpi == 0) m_dpi = 96;
 
+            EnsureThemeBrushes();
+
             // Match the dark title bar in the reference design. Ignored on
             // builds that predate the attribute.
             const BOOL darkTitleBar = TRUE;
@@ -95,6 +119,7 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                                     sizeof(darkTitleBar));
 
             if (!CreateChildren()) return -1;
+            ApplyDarkTheme();
             UpdateHotkeyRegistration();
             Layout();
             ApplyTypography();
@@ -103,6 +128,14 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             m_engine.Start(m_hwnd, m_settings.ResolvedTranscriptPath(), m_settings.pollIntervalMs);
             SetStatus(std::wstring(L"Saving transcript to ") + m_settings.ResolvedTranscriptPath());
             return 0;
+        }
+
+        case WM_ERASEBKGND: {
+            if (!m_windowBrush) EnsureThemeBrushes();
+            RECT rc{};
+            ::GetClientRect(m_hwnd, &rc);
+            ::FillRect(reinterpret_cast<HDC>(wParam), &rc, m_windowBrush);
+            return 1;
         }
 
         case WM_SIZE:
@@ -131,6 +164,28 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         case WM_COMMAND:
             OnCommand(LOWORD(wParam), HIWORD(wParam));
             return 0;
+
+        case WM_DRAWITEM: {
+            const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+            if (item && item->CtlType == ODT_BUTTON) {
+                DrawDarkButton(*item);
+                return TRUE;
+            }
+            break;
+        }
+
+        case WM_NOTIFY: {
+            const auto* hdr = reinterpret_cast<const NMHDR*>(lParam);
+            if (hdr && hdr->hwndFrom == m_statusBar && hdr->code == NM_CUSTOMDRAW) {
+                const auto* draw = reinterpret_cast<const NMCUSTOMDRAW*>(lParam);
+                if (draw->dwDrawStage == CDDS_PREPAINT) {
+                    ::SetTextColor(draw->hdc, kTextSecondary);
+                    ::SetBkColor(draw->hdc, kStatusBg);
+                    return CDRF_NEWFONT;
+                }
+            }
+            break;
+        }
 
         case WM_MOUSEWHEEL:
             // Forward wheel input to the pane even when it does not have focus.
@@ -177,6 +232,12 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             if (m_view.Handle()) ::SetFocus(m_view.Handle());
             return 0;
 
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+            return OnCtlColor(reinterpret_cast<HDC>(wParam), reinterpret_cast<HWND>(lParam));
+
         case WM_CLOSE: {
             // Stop producing before tearing down so no posted payload leaks.
             m_engine.Stop();
@@ -203,6 +264,7 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                 ::DeleteObject(m_controlFont);
                 m_controlFont = nullptr;
             }
+            DiscardThemeBrushes();
             ::PostQuitMessage(0);
             return 0;
 
@@ -216,11 +278,17 @@ bool MainWindow::CreateChildren() {
     if (!CaptionView::RegisterWindowClass(m_instance)) return false;
     if (!m_view.Create(m_hwnd, m_instance, IDC_CAPTION_VIEW)) return false;
 
+    m_sidePanel = ::CreateWindowExW(0, WC_STATICW, L"", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10,
+                                    m_hwnd,
+                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SIDE_PANEL)),
+                                    m_instance, nullptr);
+    if (!m_sidePanel) return false;
+
     const auto button = [&](const wchar_t* text, int id) {
-        return ::CreateWindowExW(0, WC_BUTTONW, text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                                 0, 0, 10, 10, m_hwnd,
-                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_instance,
-                                 nullptr);
+        return ::CreateWindowExW(0, WC_BUTTONW, text,
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 10, 10,
+                                 m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                 m_instance, nullptr);
     };
     const auto check = [&](const wchar_t* text, int id) {
         return ::CreateWindowExW(0, WC_BUTTONW, text,
@@ -268,6 +336,98 @@ bool MainWindow::CreateChildren() {
     PopulateSpacingCombo();
     ApplyControlFont();
     return true;
+}
+
+void MainWindow::EnsureThemeBrushes() {
+    if (!m_windowBrush) m_windowBrush = ::CreateSolidBrush(kWindowBg);
+    if (!m_panelBrush) m_panelBrush = ::CreateSolidBrush(kPanelBg);
+    if (!m_buttonBrush) m_buttonBrush = ::CreateSolidBrush(kButtonFace);
+    if (!m_buttonPressedBrush) m_buttonPressedBrush = ::CreateSolidBrush(kButtonPressed);
+}
+
+void MainWindow::DiscardThemeBrushes() {
+    if (m_windowBrush) {
+        ::DeleteObject(m_windowBrush);
+        m_windowBrush = nullptr;
+    }
+    if (m_panelBrush) {
+        ::DeleteObject(m_panelBrush);
+        m_panelBrush = nullptr;
+    }
+    if (m_buttonBrush) {
+        ::DeleteObject(m_buttonBrush);
+        m_buttonBrush = nullptr;
+    }
+    if (m_buttonPressedBrush) {
+        ::DeleteObject(m_buttonPressedBrush);
+        m_buttonPressedBrush = nullptr;
+    }
+}
+
+void MainWindow::ApplyDarkTheme() {
+    EnsureThemeBrushes();
+
+    const HWND explorer[] = {m_pressEnterCheck, m_copyLiveCheck, m_hintLabel, m_sidePanel,
+                             m_statusBar};
+    for (HWND control : explorer) TryDarkControlTheme(control, L"DarkMode_Explorer");
+
+    const HWND combos[] = {m_fontCombo, m_sizeCombo, m_spacingCombo};
+    for (HWND control : combos) TryDarkControlTheme(control, L"DarkMode_CFD");
+
+    if (m_statusBar) {
+        ::SendMessageW(m_statusBar, SB_SETBKCOLOR, 0, static_cast<LPARAM>(kStatusBg));
+    }
+
+    ::InvalidateRect(m_hwnd, nullptr, TRUE);
+}
+
+LRESULT MainWindow::OnCtlColor(HDC dc, HWND control) {
+    EnsureThemeBrushes();
+
+    const bool isHint = control == m_hintLabel;
+    const bool isPanel = control == m_sidePanel;
+    const COLORREF text = isHint ? kTextSecondary : kTextPrimary;
+    const COLORREF background = isPanel ? kPanelBg : kWindowBg;
+    const HBRUSH brush = isPanel ? m_panelBrush : m_windowBrush;
+
+    ::SetTextColor(dc, text);
+    ::SetBkColor(dc, background);
+    ::SetBkMode(dc, OPAQUE);
+    return reinterpret_cast<LRESULT>(brush);
+}
+
+void MainWindow::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const bool disabled = (item.itemState & ODS_DISABLED) != 0;
+    const bool focused = (item.itemState & ODS_FOCUS) != 0;
+
+    const HBRUSH fill = pressed ? m_buttonPressedBrush : m_buttonBrush;
+    ::FillRect(item.hDC, &item.rcItem, fill ? fill : reinterpret_cast<HBRUSH>(::GetStockObject(DKGRAY_BRUSH)));
+
+    const HPEN border = ::CreatePen(PS_SOLID, 1, kButtonBorder);
+    const HGDIOBJ oldPen = ::SelectObject(item.hDC, border);
+    const HGDIOBJ oldBrush = ::SelectObject(item.hDC, ::GetStockObject(NULL_BRUSH));
+    ::Rectangle(item.hDC, item.rcItem.left, item.rcItem.top, item.rcItem.right, item.rcItem.bottom);
+    ::SelectObject(item.hDC, oldBrush);
+    ::SelectObject(item.hDC, oldPen);
+    ::DeleteObject(border);
+
+    wchar_t text[128]{};
+    ::GetWindowTextW(item.hwndItem, text, 128);
+
+    ::SetBkMode(item.hDC, TRANSPARENT);
+    ::SetTextColor(item.hDC, disabled ? kTextSecondary : kTextPrimary);
+    if (m_controlFont) ::SelectObject(item.hDC, m_controlFont);
+
+    RECT textRc = item.rcItem;
+    if (pressed) ::OffsetRect(&textRc, 1, 1);
+    ::DrawTextW(item.hDC, text, -1, &textRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    if (focused && !pressed) {
+        RECT focusRc = item.rcItem;
+        ::InflateRect(&focusRc, -3, -3);
+        ::DrawFocusRect(item.hDC, &focusRc);
+    }
 }
 
 void MainWindow::ApplyControlFont() {
@@ -361,9 +521,15 @@ void MainWindow::Layout() {
 
     const int barTop = std::max(clientHeight - statusHeight - barHeight, 0);
     const int viewHeight = std::max(barTop, 0);
+    const int sidePanelWidth = Scaled(kSidePanelWidth);
+    const int viewWidth = std::max(clientWidth - sidePanelWidth, 0);
 
     if (m_view.Handle()) {
-        ::SetWindowPos(m_view.Handle(), nullptr, 0, 0, clientWidth, viewHeight,
+        ::SetWindowPos(m_view.Handle(), nullptr, 0, 0, viewWidth, viewHeight,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    if (m_sidePanel) {
+        ::SetWindowPos(m_sidePanel, nullptr, viewWidth, 0, sidePanelWidth, viewHeight,
                        SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
