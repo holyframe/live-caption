@@ -65,7 +65,7 @@ selection is implemented directly on it:
 | Drag | Selects across lines. Dragging past the top or bottom edge scrolls. |
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
-| Left gutter (50px) | Click or drag to select whole lines, including their line breaks. Arrow cursor; the row under the pointer lights up. |
+| Left gutter (75px) | Click or drag to select whole lines, including their line breaks. Arrow cursor; the row under the pointer lights up. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
 

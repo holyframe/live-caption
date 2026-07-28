@@ -20,7 +20,7 @@ constexpr D2D1_COLOR_F kGutterHover = {55.0f / 255.0f, 55.0f / 255.0f, 55.0f / 2
 
 // Left strip is the line-select gutter; the right margin stays narrower so the
 // wider gutter does not squeeze the transcript.
-constexpr float kGutterDip = 50.0f;
+constexpr float kGutterDip = 75.0f;
 constexpr float kMarginRightDip = 14.0f;
 constexpr float kMarginYDip = 10.0f;
 
