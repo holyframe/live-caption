@@ -281,6 +281,17 @@ int main() {
     view.Present();
     CheckText(view.SelectedText(), frozen, "selection short of the end stays put");
 
+    // Shrinking the pane used to jump to the bottom whenever stick-to-bottom was
+    // set (including when the transcript still fitted on screen), which scrolled
+    // a mid-pane highlight out of sight and looked like the selection was gone.
+    RECT before{};
+    ::GetClientRect(view.Handle(), &before);
+    const int newHeight = std::max((before.bottom - before.top) / 2, 80L);
+    ::SetWindowPos(view.Handle(), nullptr, 0, 0, before.right - before.left, newHeight,
+                   SWP_NOMOVE | SWP_NOZORDER);
+    Pump(40);
+    CheckText(view.SelectedText(), frozen, "selection survives a caption pane height change");
+
     // --- Gutter line select ------------------------------------------------
     view.QueueUpdate(0, lines);
     view.Present();

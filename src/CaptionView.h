@@ -97,6 +97,8 @@ private:
     TextPos TranscriptEnd() const;
     TextPos LineEndExclusive(size_t absoluteLine) const;
     bool  FarEndAtTranscriptEnd() const;
+    // Auto-follow the bottom unless a mid-transcript selection would scroll away.
+    bool  ShouldFollowBottom() const;
     void  OrderedSelection(TextPos* start, TextPos* end) const;
     void  ResetSelection();
     void  ClampSelection();

@@ -135,6 +135,17 @@ LRESULT CaptionView::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
+        case WM_MOUSEACTIVATE: {
+            // Clicking the pane to bring the app forward must not collapse an
+            // existing selection — eat that activation click.
+            const HWND root = ::GetAncestor(m_hwnd, GA_ROOT);
+            if (root && ::GetForegroundWindow() != root) {
+                ::SetFocus(m_hwnd);
+                return MA_ACTIVATEANDEAT;
+            }
+            break;
+        }
+
         case WM_LBUTTONDOWN: {
             ::SetFocus(m_hwnd);
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
@@ -480,7 +491,7 @@ void CaptionView::QueueUpdate(size_t firstDirtyLine, std::vector<std::wstring> l
 }
 
 void CaptionView::RefreshAfterContentChange() {
-    if (m_stickToBottom) {
+    if (ShouldFollowBottom()) {
         ScrollToBottom();
     } else {
         UpdateScrollBar();
@@ -584,7 +595,9 @@ void CaptionView::OnSize() {
         m_measuredWidth = width;
         InvalidateAllLayouts();
     }
-    if (m_stickToBottom) {
+    // Keep a mid-pane selection on screen across splitter / window resizes;
+    // jumping to the bottom would scroll the highlight away.
+    if (ShouldFollowBottom()) {
         ScrollToBottom();
     } else {
         SetScrollPos(m_scrollY, false);
@@ -744,6 +757,15 @@ bool CaptionView::FarEndAtTranscriptEnd() const {
     TextPos end;
     OrderedSelection(&start, &end);
     return end == TranscriptEnd();
+}
+
+bool CaptionView::ShouldFollowBottom() const {
+    if (!m_stickToBottom) return false;
+    // A selection that is not growing with the transcript must keep its
+    // viewport — following the bottom would scroll the highlight out of sight
+    // when the pane is resized or new captions arrive while the user is away.
+    if (HasSelection() && !FarEndAtTranscriptEnd()) return false;
+    return true;
 }
 
 bool CaptionView::HasSelection() const {
