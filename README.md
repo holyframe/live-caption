@@ -107,10 +107,34 @@ affordable: measured cost during continuous captioning is under 2% of one core.
 A 2 ms floor between reads stops a genuinely chatty provider from spinning the
 thread.
 
-On the UI side, an applied update calls `UpdateWindow` rather than leaving the
-repaint to arrive as a normal `WM_PAINT`. `WM_PAINT` is the lowest-priority
-message there is, so waiting for the queue to run dry can hold a finished caption
-off the screen for an extra frame.
+### Getting it on screen
+
+Reading the source quickly is only half of it; the repaint path had the larger
+problem. `tests\render_probe.bat` measures it:
+
+| `ID2D1HwndRenderTarget::EndDraw` | per frame | worst |
+| --- | --- | --- |
+| `D2D1_PRESENT_OPTIONS_NONE` (the default) | 17.73 ms | 32.14 ms |
+| `D2D1_PRESENT_OPTIONS_IMMEDIATELY` | 0.61 ms | 6.70 ms |
+
+The default present blocks until the next vertical blank. Captions revise faster
+than the 16.9 ms refresh interval, so a vblank-locked repaint could not keep up,
+and updates accumulated in the message queue — the view fell steadily further
+behind the source and only caught up when the speaker paused. The render target
+is now created with `IMMEDIATELY`.
+
+Two supporting changes keep it that way:
+
+- **Updates coalesce into one frame.** On receiving a caption update the window
+  drains every other one already queued and applies them all before painting
+  once, so the queue cannot grow without bound.
+- **Content changes always invalidate.** Repainting used to be left to
+  `SetScrollPos`, which skips its redraw when the scroll offset has not moved —
+  precisely what happens when the recogniser revises the last line in place
+  without changing its height. Such a revision could sit unrepainted
+  indefinitely. `CaptionView::Present` now invalidates unconditionally and calls
+  `UpdateWindow`, rather than waiting for `WM_PAINT` to arrive as the
+  lowest-priority message in the queue.
 
 Each read costs one or two cross-process calls, because the working accessor
 (`TextPattern`, `ValuePattern` or `Name`) is identified once at attach time and

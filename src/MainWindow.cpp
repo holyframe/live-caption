@@ -596,7 +596,23 @@ void MainWindow::OnMinimizeAll() {
 
 void MainWindow::OnCaptionUpdate(CaptionUpdate* update) {
     if (!update) return;
-    m_view.ApplyUpdate(update->firstDirtyLine, std::move(update->lines));
+    m_view.QueueUpdate(update->firstDirtyLine, std::move(update->lines));
+
+    // The capture thread reads far faster than a frame lasts, so by the time we
+    // get here there may already be newer updates waiting. Folding them into
+    // this same repaint keeps the queue from growing without bound, which would
+    // otherwise leave the view drifting steadily further behind the source and
+    // only catching up when the speaker pauses.
+    MSG queued;
+    while (::PeekMessageW(&queued, m_hwnd, WM_APP_CAPTION_UPDATE, WM_APP_CAPTION_UPDATE,
+                          PM_REMOVE)) {
+        auto* pending = reinterpret_cast<CaptionUpdate*>(queued.lParam);
+        if (!pending) continue;
+        m_view.QueueUpdate(pending->firstDirtyLine, std::move(pending->lines));
+        delete pending;
+    }
+
+    m_view.Present();
     MaybeCopyRealtime();
 }
 

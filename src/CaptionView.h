@@ -22,8 +22,11 @@ public:
     HWND Handle() const { return m_hwnd; }
 
     // Replaces every line from `firstDirtyLine` (an absolute transcript index)
-    // with `lines`.
-    void ApplyUpdate(size_t firstDirtyLine, std::vector<std::wstring> lines);
+    // with `lines`. Touches only the model, so a burst of updates that arrives
+    // faster than the screen can be repainted collapses into a single frame.
+    void QueueUpdate(size_t firstDirtyLine, std::vector<std::wstring> lines);
+    // Puts everything queued so far on screen, synchronously.
+    void Present();
     void Clear();
 
     void SetTypography(const std::wstring& fontFamily, int fontSizePt, double lineSpacing);
@@ -55,6 +58,7 @@ private:
     IDWriteTextLayout* EnsureLayout(size_t index);
     float TotalHeight();
     void  ReleaseLayoutsOutside(size_t firstVisible, size_t lastVisible);
+    void  RefreshAfterContentChange();
     void  UpdateScrollBar();
     void  SetScrollPos(float y, bool redraw);
     void  OnPaint();

@@ -173,9 +173,16 @@ bool CaptionView::EnsureDeviceResources() {
         ::GetClientRect(m_hwnd, &rc);
         const D2D1_SIZE_U size = D2D1::SizeU(static_cast<UINT32>(std::max<LONG>(rc.right - rc.left, 1)),
                                              static_cast<UINT32>(std::max<LONG>(rc.bottom - rc.top, 1)));
-        if (FAILED(m_d2dFactory->CreateHwndRenderTarget(D2D1::RenderTargetProperties(),
-                                                        D2D1::HwndRenderTargetProperties(m_hwnd, size),
-                                                        m_renderTarget.ReleaseAndGetAddressOf()))) {
+        // PRESENT_OPTIONS_IMMEDIATELY matters more than it looks. The default
+        // makes EndDraw block until the next vertical blank, measured at
+        // 17.7 ms per repaint against 0.6 ms here (tests\render_probe.bat).
+        // Captions revise faster than the refresh rate, so a vblank-locked
+        // present cannot keep up and updates pile into the message queue.
+        if (FAILED(m_d2dFactory->CreateHwndRenderTarget(
+                D2D1::RenderTargetProperties(),
+                D2D1::HwndRenderTargetProperties(m_hwnd, size,
+                                                 D2D1_PRESENT_OPTIONS_IMMEDIATELY),
+                m_renderTarget.ReleaseAndGetAddressOf()))) {
             return false;
         }
         // Work in device pixels so scroll offsets and hit-testing stay integral;
@@ -284,7 +291,7 @@ void CaptionView::ReleaseLayoutsOutside(size_t firstVisible, size_t lastVisible)
     }
 }
 
-void CaptionView::ApplyUpdate(size_t firstDirtyLine, std::vector<std::wstring> lines) {
+void CaptionView::QueueUpdate(size_t firstDirtyLine, std::vector<std::wstring> lines) {
     // Translate the transcript-absolute index into our trimmed window.
     size_t local = 0;
     if (firstDirtyLine >= m_lineOffset) {
@@ -312,13 +319,23 @@ void CaptionView::ApplyUpdate(size_t firstDirtyLine, std::vector<std::wstring> l
     }
 
     m_totalHeight = -1.0f;
+}
+
+void CaptionView::RefreshAfterContentChange() {
     if (m_stickToBottom) {
         ScrollToBottom();
     } else {
         UpdateScrollBar();
-        ::InvalidateRect(m_hwnd, nullptr, FALSE);
     }
+    // Unconditional, and deliberately not left to SetScrollPos: that skips its
+    // redraw when the offset is unchanged, which is exactly what happens when
+    // the recogniser revises the last line in place without changing its height.
+    // Relying on it meant a revised line could sit unrepainted indefinitely.
+    ::InvalidateRect(m_hwnd, nullptr, FALSE);
+}
 
+void CaptionView::Present() {
+    RefreshAfterContentChange();
     // Paint now rather than when the message queue next runs dry. WM_PAINT is
     // the lowest-priority message there is, so leaving it to be delivered
     // normally can hold a finished caption off the screen for another frame.
@@ -341,12 +358,7 @@ void CaptionView::SetTypography(const std::wstring& fontFamily, int fontSizePt, 
     m_lineSpacing = lineSpacing;
     m_textFormat.Reset();
     InvalidateAllLayouts();
-    if (m_stickToBottom) {
-        ScrollToBottom();
-    } else {
-        UpdateScrollBar();
-        ::InvalidateRect(m_hwnd, nullptr, FALSE);
-    }
+    RefreshAfterContentChange();
 }
 
 void CaptionView::ScrollByLines(int lines) {
