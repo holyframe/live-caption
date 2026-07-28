@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cwctype>
 
 #include "resource.h"
 
@@ -14,9 +15,29 @@ constexpr const wchar_t* kClassName = L"LiveCaptionViewPane";
 // Colours sampled to match the dark caption pane in the reference design.
 constexpr D2D1_COLOR_F kBackground = {43.0f / 255.0f, 43.0f / 255.0f, 43.0f / 255.0f, 1.0f};
 constexpr D2D1_COLOR_F kForeground = {228.0f / 255.0f, 228.0f / 255.0f, 228.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kSelection  = {38.0f / 255.0f, 79.0f / 255.0f, 120.0f / 255.0f, 1.0f};
+// The only thing that advertises the line-select strip, so it has to read as
+// deliberate without competing with the text.
+constexpr D2D1_COLOR_F kGutterHover = {70.0f / 255.0f, 70.0f / 255.0f, 70.0f / 255.0f, 1.0f};
 
+// The left padding doubles as the line-select gutter.
 constexpr float kMarginXDip = 14.0f;
 constexpr float kMarginYDip = 10.0f;
+
+// Drives the scroll while a selection is dragged past the top or bottom edge.
+constexpr UINT_PTR kAutoScrollTimerId = 1;
+constexpr UINT     kAutoScrollIntervalMs = 40;
+constexpr float    kAutoScrollMaxStepDip = 48.0f;
+
+enum ContextMenuCommand : UINT {
+    kMenuCopy = 1,
+    kMenuSelectAll,
+    kMenuClearSelection,
+};
+
+bool IsWordCharacter(wchar_t ch) {
+    return std::iswalnum(static_cast<wint_t>(ch)) != 0 || ch == L'_';
+}
 
 }  // namespace
 
@@ -109,21 +130,121 @@ LRESULT CaptionView::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
-        case WM_LBUTTONDOWN:
+        case WM_LBUTTONDOWN: {
             ::SetFocus(m_hwnd);
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            BeginDrag(pt, (wParam & MK_SHIFT) != 0);
+            return 0;
+        }
+
+        case WM_MOUSEMOVE: {
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (m_dragMode != DragMode::None) {
+                m_dragPoint = pt;
+                UpdateDragSelection();
+                UpdateAutoScroll();
+            } else {
+                UpdateGutterHover(pt);
+            }
+            return 0;
+        }
+
+        case WM_MOUSELEAVE:
+            m_trackingLeave = false;
+            ClearGutterHover();
             return 0;
 
-        case WM_LBUTTONDBLCLK:
-            // "Double-click empty area to send" from the reference design.
+        case WM_LBUTTONUP:
+            EndDrag();
+            return 0;
+
+        case WM_CAPTURECHANGED:
+            // Someone else took the mouse; abandon the drag but keep what is
+            // already selected.
+            m_dragMode = DragMode::None;
+            StopAutoScroll();
+            return 0;
+
+        case WM_TIMER:
+            if (wParam == kAutoScrollTimerId) {
+                UpdateAutoScroll();
+                return 0;
+            }
+            break;
+
+        case WM_SETCURSOR:
+            if (LOWORD(lParam) == HTCLIENT) {
+                POINT pt{};
+                ::GetCursorPos(&pt);
+                ::ScreenToClient(m_hwnd, &pt);
+                // An arrow over the gutter, as in an editor's line-number strip.
+                const bool overGutter = static_cast<float>(pt.x) < GutterWidth();
+                ::SetCursor(::LoadCursorW(nullptr, overGutter ? IDC_ARROW : IDC_IBEAM));
+                return TRUE;
+            }
+            break;
+
+        case WM_LBUTTONDBLCLK: {
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            bool insideContent = false;
+            LineAtPoint(pt, nullptr, &insideContent);
+            if (insideContent && static_cast<float>(pt.x) < GutterWidth()) {
+                // The gutter already selected this line on the way down.
+                EndDrag();
+                return 0;
+            }
+
+            TextPos position;
+            bool insideText = false;
+            if (PositionFromPoint(pt, &position, &insideText) && insideText) {
+                // Drop the drag the preceding WM_LBUTTONDOWN started, so a
+                // twitch before the button comes up cannot collapse the word
+                // back to a caret.
+                EndDrag();
+                SelectWordAt(position);
+                return 0;
+            }
+            // "Double-click empty area to send" from the reference design; on a
+            // word the gesture selects instead, as it does everywhere else.
             ::SendMessageW(::GetParent(m_hwnd), WM_COMMAND,
                            MAKEWPARAM(IDC_BTN_SEND, BN_CLICKED), 0);
             return 0;
+        }
+
+        case WM_RBUTTONUP: {
+            ::SetFocus(m_hwnd);
+            POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ::ClientToScreen(m_hwnd, &pt);
+            ShowContextMenu(pt);
+            return 0;
+        }
+
+        case WM_CONTEXTMENU: {
+            POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (pt.x == -1 && pt.y == -1) {  // menu key rather than the mouse
+                RECT rc{};
+                ::GetClientRect(m_hwnd, &rc);
+                pt = POINT{rc.left + (rc.right - rc.left) / 2, rc.top + (rc.bottom - rc.top) / 2};
+                ::ClientToScreen(m_hwnd, &pt);
+            }
+            ShowContextMenu(pt);
+            return 0;
+        }
 
         case WM_GETDLGCODE:
             return DLGC_WANTARROWS | DLGC_WANTCHARS;
 
         case WM_KEYDOWN:
+            if (::GetKeyState(VK_CONTROL) < 0) {
+                switch (wParam) {
+                    case 'A':       SelectAll();   return 0;
+                    case 'C':       RequestCopy(); return 0;
+                    case VK_INSERT: RequestCopy(); return 0;
+                    default: break;
+                }
+            }
             switch (wParam) {
+                case VK_ESCAPE: ClearSelection(); return 0;
                 case VK_UP:   ScrollByLines(-1); return 0;
                 case VK_DOWN: ScrollByLines(1);  return 0;
                 case VK_PRIOR: {
@@ -145,6 +266,7 @@ LRESULT CaptionView::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             break;
 
         case WM_DESTROY:
+            StopAutoScroll();
             DiscardDeviceResources();
             break;
 
@@ -189,10 +311,24 @@ bool CaptionView::EnsureDeviceResources() {
         // DPI is applied to the font size instead.
         m_renderTarget->SetDpi(96.0f, 96.0f);
         m_textBrush.Reset();
+        m_selectionBrush.Reset();
+        m_gutterBrush.Reset();
     }
     if (!m_textBrush) {
         if (FAILED(m_renderTarget->CreateSolidColorBrush(kForeground,
                                                          m_textBrush.ReleaseAndGetAddressOf()))) {
+            return false;
+        }
+    }
+    if (!m_selectionBrush) {
+        if (FAILED(m_renderTarget->CreateSolidColorBrush(
+                kSelection, m_selectionBrush.ReleaseAndGetAddressOf()))) {
+            return false;
+        }
+    }
+    if (!m_gutterBrush) {
+        if (FAILED(m_renderTarget->CreateSolidColorBrush(
+                kGutterHover, m_gutterBrush.ReleaseAndGetAddressOf()))) {
             return false;
         }
     }
@@ -203,6 +339,8 @@ void CaptionView::DiscardDeviceResources() {
     InvalidateAllLayouts();
     m_textFormat.Reset();
     m_textBrush.Reset();
+    m_selectionBrush.Reset();
+    m_gutterBrush.Reset();
     m_renderTarget.Reset();
 }
 
@@ -292,6 +430,12 @@ void CaptionView::ReleaseLayoutsOutside(size_t firstVisible, size_t lastVisible)
 }
 
 void CaptionView::QueueUpdate(size_t firstDirtyLine, std::vector<std::wstring> lines) {
+    // Decided before the model changes: a selection that ran to the end of the
+    // transcript keeps running to the end of it afterwards, so text recognised
+    // while the user holds a selection joins that selection instead of landing
+    // just outside it.
+    const bool followTail = SelectionFollowsTail();
+
     // Translate the transcript-absolute index into our trimmed window.
     size_t local = 0;
     if (firstDirtyLine >= m_lineOffset) {
@@ -319,6 +463,11 @@ void CaptionView::QueueUpdate(size_t firstDirtyLine, std::vector<std::wstring> l
     }
 
     m_totalHeight = -1.0f;
+    // A revised or trimmed line can leave an endpoint pointing past the end of
+    // its text; pull it back in rather than dropping the selection outright, so
+    // a selection made while the speaker is still talking survives.
+    ClampSelection();
+    if (followTail) ExtendSelectionToTail();
 }
 
 void CaptionView::RefreshAfterContentChange() {
@@ -348,6 +497,8 @@ void CaptionView::Clear() {
     m_totalHeight = -1.0f;
     m_scrollY = 0.0f;
     m_stickToBottom = true;
+    ResetSelection();
+    ClearGutterHover();
     UpdateScrollBar();
     ::InvalidateRect(m_hwnd, nullptr, FALSE);
 }
@@ -390,6 +541,8 @@ void CaptionView::SetScrollPos(float y, bool redraw) {
         return;
     }
     m_scrollY = clamped;
+    // The row under the pointer just changed without the pointer moving.
+    ClearGutterHover();
     UpdateScrollBar();
     if (redraw) ::InvalidateRect(m_hwnd, nullptr, FALSE);
 }
@@ -446,11 +599,21 @@ void CaptionView::OnPaint() {
         size_t firstVisible = m_lines.size();
         size_t lastVisible = 0;
 
+        const bool drawSelection = HasSelection();
+        TextPos selectionStart;
+        TextPos selectionEnd;
+        if (drawSelection) OrderedSelection(&selectionStart, &selectionEnd);
+
         for (size_t i = 0; i < m_lines.size(); ++i) {
             EnsureHeight(i);
             const float height = std::max(m_lines[i].height, 0.0f);
 
             if (y + height >= 0.0f && y <= viewport) {
+                if (m_hoverValid && m_hoverLine == m_lineOffset + i) {
+                    m_renderTarget->FillRectangle(D2D1::RectF(0.0f, y, originX, y + height),
+                                                  m_gutterBrush.Get());
+                }
+                if (drawSelection) DrawLineSelection(i, originX, y, selectionStart, selectionEnd);
                 if (IDWriteTextLayout* layout = EnsureLayout(i)) {
                     m_renderTarget->DrawTextLayout(D2D1::Point2F(originX, y), layout,
                                                    m_textBrush.Get(),
@@ -476,6 +639,424 @@ void CaptionView::OnPaint() {
     }
 
     ::EndPaint(m_hwnd, &ps);
+}
+
+float CaptionView::GutterWidth() const {
+    return kMarginXDip * (static_cast<float>(m_dpi) / 96.0f);
+}
+
+size_t CaptionView::LineAtPoint(POINT client, float* lineTop, bool* insideContent) {
+    if (insideContent) *insideContent = false;
+    if (lineTop) *lineTop = 0.0f;
+    if (m_lines.empty()) return 0;
+
+    const float scale = static_cast<float>(m_dpi) / 96.0f;
+    const float pointY = static_cast<float>(client.y);
+
+    // A point above the first line or below the last one clamps to that line,
+    // which is what a drag past either edge needs; `insideContent` is how the
+    // caller tells the two apart.
+    float top = kMarginYDip * scale - m_scrollY;
+    const bool above = pointY < top;
+    for (size_t i = 0; i < m_lines.size(); ++i) {
+        EnsureHeight(i);
+        const float height = std::max(m_lines[i].height, 0.0f);
+        if (pointY < top + height || i + 1 == m_lines.size()) {
+            if (lineTop) *lineTop = top;
+            if (insideContent) *insideContent = !above && pointY < top + height;
+            return i;
+        }
+        top += height;
+    }
+    return m_lines.size() - 1;
+}
+
+bool CaptionView::PositionFromPoint(POINT client, TextPos* position, bool* insideText) {
+    if (insideText) *insideText = false;
+    if (!position || m_lines.empty()) return false;
+
+    float top = 0.0f;
+    const size_t index = LineAtPoint(client, &top, nullptr);
+    const std::wstring& text = m_lines[index].text;
+    position->line = m_lineOffset + index;
+    position->offset = text.size();
+
+    IDWriteTextLayout* layout = EnsureLayout(index);
+    if (!layout) return false;
+
+    BOOL trailing = FALSE;
+    BOOL inside = FALSE;
+    DWRITE_HIT_TEST_METRICS metrics{};
+    if (FAILED(layout->HitTestPoint(static_cast<float>(client.x) - GutterWidth(),
+                                    static_cast<float>(client.y) - top, &trailing, &inside,
+                                    &metrics))) {
+        return false;
+    }
+
+    const size_t offset = static_cast<size_t>(metrics.textPosition) +
+                          (trailing ? static_cast<size_t>(metrics.length) : 0);
+    position->offset = std::min(offset, text.size());
+    if (insideText) *insideText = inside != FALSE;
+    return true;
+}
+
+CaptionView::TextPos CaptionView::LineStart(size_t line) const {
+    return TextPos{line, 0};
+}
+
+CaptionView::TextPos CaptionView::LineBreak(size_t line) const {
+    if (m_lines.empty()) return TextPos{line, 0};
+    const size_t lastLine = m_lineOffset + m_lines.size() - 1;
+    // Taking a whole line means taking its line break too, which lives at the
+    // start of the next line. The last line has none.
+    if (line >= lastLine) return TextPos{lastLine, m_lines.back().text.size()};
+    return TextPos{line + 1, 0};
+}
+
+bool CaptionView::HasSelection() const {
+    return m_selectionValid && !(m_selectionAnchor == m_selectionCaret);
+}
+
+bool CaptionView::SelectionFollowsTail() const {
+    if (!HasSelection() || m_lines.empty()) return false;
+    TextPos start;
+    TextPos end;
+    OrderedSelection(&start, &end);
+    return end.line == m_lineOffset + m_lines.size() - 1 &&
+           end.offset >= m_lines.back().text.size();
+}
+
+void CaptionView::OrderedSelection(TextPos* start, TextPos* end) const {
+    const bool forward = !(m_selectionCaret < m_selectionAnchor);
+    *start = forward ? m_selectionAnchor : m_selectionCaret;
+    *end = forward ? m_selectionCaret : m_selectionAnchor;
+}
+
+void CaptionView::SetSelection(const TextPos& anchor, const TextPos& caret) {
+    // Mouse moves arrive far more often than the selection actually changes.
+    if (m_selectionValid && m_selectionAnchor == anchor && m_selectionCaret == caret) return;
+    m_selectionAnchor = anchor;
+    m_selectionCaret = caret;
+    m_selectionValid = true;
+    ::InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void CaptionView::ResetSelection() {
+    m_selectionValid = false;
+    m_selectionAnchor = TextPos{};
+    m_selectionCaret = TextPos{};
+}
+
+void CaptionView::ClearSelection() {
+    const bool had = HasSelection();
+    ResetSelection();
+    if (had) ::InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void CaptionView::ClampSelection() {
+    if (!m_selectionValid) return;
+    if (m_lines.empty()) {
+        ResetSelection();
+        return;
+    }
+
+    const size_t lastLine = m_lineOffset + m_lines.size() - 1;
+    const auto clamp = [&](TextPos& position) {
+        if (position.line < m_lineOffset) {
+            position.line = m_lineOffset;
+            position.offset = 0;
+        } else if (position.line > lastLine) {
+            position.line = lastLine;
+            position.offset = m_lines.back().text.size();
+        }
+        const std::wstring& text = m_lines[position.line - m_lineOffset].text;
+        position.offset = std::min(position.offset, text.size());
+    };
+    clamp(m_selectionAnchor);
+    clamp(m_selectionCaret);
+
+    if (m_selectionAnchor == m_selectionCaret) ResetSelection();
+}
+
+void CaptionView::ExtendSelectionToTail() {
+    if (!m_selectionValid || m_lines.empty()) return;
+    const TextPos tail{m_lineOffset + m_lines.size() - 1, m_lines.back().text.size()};
+    if (m_selectionCaret < m_selectionAnchor) {
+        SetSelection(tail, m_selectionCaret);
+    } else {
+        SetSelection(m_selectionAnchor, tail);
+    }
+}
+
+void CaptionView::SelectWordAt(const TextPos& position) {
+    if (position.line < m_lineOffset) return;
+    const size_t index = position.line - m_lineOffset;
+    if (index >= m_lines.size()) return;
+
+    const std::wstring& text = m_lines[index].text;
+    if (text.empty()) return;
+
+    size_t start = std::min(position.offset, text.size() - 1);
+    size_t end = start;
+    if (IsWordCharacter(text[start])) {
+        while (start > 0 && IsWordCharacter(text[start - 1])) --start;
+        while (end < text.size() && IsWordCharacter(text[end])) ++end;
+    } else {
+        end = start + 1;  // punctuation or space: take just that character
+    }
+
+    SetSelection(TextPos{position.line, start}, TextPos{position.line, end});
+}
+
+void CaptionView::SelectLinesFromAnchor(size_t line) {
+    if (m_lines.empty()) return;
+    const size_t first = m_lineOffset;
+    const size_t last = m_lineOffset + m_lines.size() - 1;
+    const size_t target = std::clamp(line, first, last);
+    const size_t anchor = std::clamp(m_dragAnchorLine, first, last);
+
+    if (target >= anchor) {
+        SetSelection(LineStart(anchor), LineBreak(target));
+    } else {
+        // Dragging up past the row the gesture started on flips the anchor to
+        // the end of that row, so the started-on line stays wholly selected.
+        SetSelection(LineBreak(anchor), LineStart(target));
+    }
+}
+
+void CaptionView::DrawLineSelection(size_t index, float originX, float y, const TextPos& start,
+                                    const TextPos& end) {
+    if (!m_selectionBrush || index >= m_lines.size()) return;
+
+    const size_t absolute = m_lineOffset + index;
+    if (absolute < start.line || absolute > end.line) return;
+
+    const std::wstring& text = m_lines[index].text;
+    const size_t from = absolute == start.line ? std::min(start.offset, text.size()) : 0;
+    const size_t to = absolute == end.line ? std::min(end.offset, text.size()) : text.size();
+    if (to < from) return;
+
+    // A line the selection continues past ends in a break that has no glyph of
+    // its own; a stub of highlight past the last character stands in for it so a
+    // multi-line selection reads as one continuous run.
+    const float scale = static_cast<float>(m_dpi) / 96.0f;
+    const float breakWidth =
+        absolute < end.line ? static_cast<float>(m_fontSizePt) * scale * 0.45f : 0.0f;
+
+    IDWriteTextLayout* layout = EnsureLayout(index);
+    if (!layout) return;
+
+    // One rectangle per wrapped row the range covers.
+    std::vector<DWRITE_HIT_TEST_METRICS> runs;
+    if (to > from) {
+        const UINT32 first = static_cast<UINT32>(from);
+        const UINT32 length = static_cast<UINT32>(to - from);
+        UINT32 needed = 0;
+        const HRESULT probe =
+            layout->HitTestTextRange(first, length, originX, y, nullptr, 0, &needed);
+        if (FAILED(probe) && probe != E_NOT_SUFFICIENT_BUFFER) return;
+        if (needed > 0) {
+            runs.resize(needed);
+            UINT32 written = 0;
+            if (FAILED(layout->HitTestTextRange(first, length, originX, y, runs.data(), needed,
+                                                &written))) {
+                return;
+            }
+            runs.resize(std::min<size_t>(written, runs.size()));
+        }
+    }
+
+    if (runs.empty()) {
+        if (breakWidth > 0.0f) {
+            const float height = std::max(m_lines[index].height, 1.0f);
+            m_renderTarget->FillRectangle(D2D1::RectF(originX, y, originX + breakWidth, y + height),
+                                          m_selectionBrush.Get());
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < runs.size(); ++i) {
+        const DWRITE_HIT_TEST_METRICS& run = runs[i];
+        float right = run.left + run.width;
+        if (i + 1 == runs.size()) right += breakWidth;
+        m_renderTarget->FillRectangle(D2D1::RectF(run.left, run.top, right, run.top + run.height),
+                                      m_selectionBrush.Get());
+    }
+}
+
+void CaptionView::SelectAll() {
+    if (m_lines.empty()) return;
+    SetSelection(TextPos{m_lineOffset, 0},
+                 TextPos{m_lineOffset + m_lines.size() - 1, m_lines.back().text.size()});
+}
+
+std::wstring CaptionView::SelectedText() const {
+    if (!HasSelection()) return {};
+
+    TextPos start;
+    TextPos end;
+    OrderedSelection(&start, &end);
+
+    std::wstring out;
+    for (size_t absolute = std::max(start.line, m_lineOffset); absolute <= end.line; ++absolute) {
+        const size_t index = absolute - m_lineOffset;
+        if (index >= m_lines.size()) break;
+
+        const std::wstring& text = m_lines[index].text;
+        const size_t from = absolute == start.line ? std::min(start.offset, text.size()) : 0;
+        const size_t to = absolute == end.line ? std::min(end.offset, text.size()) : text.size();
+        if (to > from) out.append(text, from, to - from);
+        if (absolute < end.line) out += L"\r\n";
+    }
+    return out;
+}
+
+void CaptionView::BeginDrag(POINT client, bool keepAnchor) {
+    if (m_lines.empty()) {
+        ClearSelection();
+        return;
+    }
+
+    m_dragPoint = client;
+    ClearGutterHover();
+
+    bool insideContent = false;
+    const size_t index = LineAtPoint(client, nullptr, &insideContent);
+    const size_t line = m_lineOffset + index;
+
+    if (insideContent && static_cast<float>(client.x) < GutterWidth()) {
+        // Shift-clicking the gutter grows the existing selection by whole lines
+        // rather than starting a new one.
+        m_dragAnchorLine = keepAnchor && m_selectionValid ? m_selectionAnchor.line : line;
+        m_dragMode = DragMode::Line;
+        ::SetCapture(m_hwnd);
+        SelectLinesFromAnchor(line);
+        return;
+    }
+
+    TextPos position;
+    if (!PositionFromPoint(client, &position, nullptr)) {
+        ClearSelection();
+        return;
+    }
+    m_dragMode = DragMode::Text;
+    ::SetCapture(m_hwnd);
+    SetSelection(keepAnchor && m_selectionValid ? m_selectionAnchor : position, position);
+}
+
+void CaptionView::UpdateDragSelection() {
+    if (m_lines.empty()) return;
+
+    if (m_dragMode == DragMode::Line) {
+        const size_t index = LineAtPoint(m_dragPoint, nullptr, nullptr);
+        SelectLinesFromAnchor(m_lineOffset + index);
+    } else if (m_dragMode == DragMode::Text) {
+        TextPos position;
+        if (PositionFromPoint(m_dragPoint, &position, nullptr)) {
+            SetSelection(m_selectionValid ? m_selectionAnchor : position, position);
+        }
+    }
+}
+
+void CaptionView::EndDrag() {
+    StopAutoScroll();
+    m_dragMode = DragMode::None;
+    if (::GetCapture() == m_hwnd) ::ReleaseCapture();
+}
+
+void CaptionView::UpdateAutoScroll() {
+    if (m_dragMode == DragMode::None) {
+        StopAutoScroll();
+        return;
+    }
+
+    RECT rc{};
+    ::GetClientRect(m_hwnd, &rc);
+    float overshoot = 0.0f;
+    if (m_dragPoint.y < rc.top) {
+        overshoot = static_cast<float>(m_dragPoint.y - rc.top);
+    } else if (m_dragPoint.y > rc.bottom) {
+        overshoot = static_cast<float>(m_dragPoint.y - rc.bottom);
+    }
+    if (overshoot == 0.0f) {
+        StopAutoScroll();
+        return;
+    }
+
+    // Keep scrolling while the pointer is held outside the pane, even though no
+    // further mouse moves arrive once it stops moving.
+    if (!m_autoScrolling) {
+        m_autoScrolling =
+            ::SetTimer(m_hwnd, kAutoScrollTimerId, kAutoScrollIntervalMs, nullptr) != 0;
+    }
+
+    const float scale = static_cast<float>(m_dpi) / 96.0f;
+    const float limit = kAutoScrollMaxStepDip * scale;
+    SetScrollPos(m_scrollY + std::clamp(overshoot, -limit, limit), true);
+    UpdateDragSelection();
+}
+
+void CaptionView::StopAutoScroll() {
+    if (!m_autoScrolling) return;
+    ::KillTimer(m_hwnd, kAutoScrollTimerId);
+    m_autoScrolling = false;
+}
+
+void CaptionView::UpdateGutterHover(POINT client) {
+    if (!m_trackingLeave) {
+        TRACKMOUSEEVENT track{};
+        track.cbSize = sizeof(track);
+        track.dwFlags = TME_LEAVE;
+        track.hwndTrack = m_hwnd;
+        m_trackingLeave = ::TrackMouseEvent(&track) != 0;
+    }
+
+    bool insideContent = false;
+    const size_t index = LineAtPoint(client, nullptr, &insideContent);
+    const bool over = insideContent && static_cast<float>(client.x) < GutterWidth();
+    const size_t line = m_lineOffset + index;
+    if (over == m_hoverValid && (!over || line == m_hoverLine)) return;
+
+    m_hoverValid = over;
+    m_hoverLine = line;
+    ::InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void CaptionView::ClearGutterHover() {
+    if (!m_hoverValid) return;
+    m_hoverValid = false;
+    ::InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void CaptionView::ShowContextMenu(POINT screen) {
+    const HMENU menu = ::CreatePopupMenu();
+    if (!menu) return;
+
+    const bool hasSelection = HasSelection();
+    ::AppendMenuW(menu, MF_STRING | (m_lines.empty() ? MF_GRAYED : 0), kMenuCopy,
+                  hasSelection ? L"Copy selection\tCtrl+C" : L"Copy all\tCtrl+C");
+    ::AppendMenuW(menu, MF_STRING | (m_lines.empty() ? MF_GRAYED : 0), kMenuSelectAll,
+                  L"Select all\tCtrl+A");
+    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    ::AppendMenuW(menu, MF_STRING | (hasSelection ? 0 : MF_GRAYED), kMenuClearSelection,
+                  L"Clear selection\tEsc");
+
+    const int chosen = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+                                        screen.x, screen.y, 0, m_hwnd, nullptr);
+    ::DestroyMenu(menu);
+
+    switch (chosen) {
+        case kMenuCopy:           RequestCopy();    break;
+        case kMenuSelectAll:      SelectAll();      break;
+        case kMenuClearSelection: ClearSelection(); break;
+        default: break;
+    }
+}
+
+void CaptionView::RequestCopy() {
+    // The parent owns the clipboard and the status bar, and decides between the
+    // selection and the whole transcript.
+    ::SendMessageW(::GetParent(m_hwnd), WM_COMMAND, MAKEWPARAM(IDC_BTN_COPY, BN_CLICKED), 0);
 }
 
 std::wstring CaptionView::FullText() const {

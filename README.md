@@ -27,11 +27,21 @@ build.bat debug      :: unoptimised build with debug info
 needs no pre-configured shell. A `CMakeLists.txt` is also provided if you prefer
 CMake or want IDE integration.
 
-To run the unit checks on the transcript-merging logic:
+To run the unit checks on the transcript-merging logic, and the checks on the
+caption pane's text selection:
 
 ```bat
 tests\run_tests.bat
+tests\selection_test.bat
 ```
+
+`selection_test.bat` drives a real caption pane with synthesised mouse and key
+input and leaves screenshots of the result in `build\`. It also runs on a
+non-Windows machine through `tests/selection_test_wine.sh`, which cross-compiles
+with mingw-w64 and runs under wine; wine still stubs out
+`IDWriteTextLayout::HitTestPoint`, so that route skips the checks that select
+through the text and cannot paint the highlight, but it covers the gutter, the
+tail-following selection and the behaviour across live updates.
 
 ## Using it
 
@@ -48,12 +58,37 @@ being written.
 | **Press Enter** | When checked, Enter triggers Send. |
 | **Normal View / Compact View** | Toggles a borderless always-on-top mode. The toolbar stays visible so you can switch back. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
-| **Copy real-time if this window is active** | Keeps the clipboard in sync with the transcript while this window is focused, throttled to once every 600 ms. |
+| **Copy real-time if this window is active** | Keeps the clipboard in sync with the transcript while this window is focused, throttled to once every 600 ms. Pauses while you are holding a selection, so it cannot overwrite it. |
 | **Front all** | Brings both this window and the caption source forward. |
 | **Minimize all** | Minimises both. |
-| **Copy** | Copies the whole visible transcript to the clipboard. |
-| Double-click the caption area | Same as Send. |
+| **Copy** | Copies the selection if there is one, otherwise the whole visible transcript. |
+| Double-click empty pane space | Same as Send. |
 | **Ctrl+Shift+Z** | Global hotkey that shows/hides the window. |
+
+### Selecting caption text
+
+The caption pane is a custom Direct2D control rather than an edit box, so
+selection is implemented on it directly, following what VS Code does:
+
+| Gesture | Behaviour |
+| --- | --- |
+| Drag through the text | Selects across lines. Dragging past the top or bottom edge scrolls. |
+| Click or drag the left padding | Takes whole lines, line break included. The padding is the line-select gutter — there are no line numbers, but it behaves like the strip they sit in, down to keeping the drag line-granular once the pointer wanders over the text. |
+| Shift+click | Extends the selection, by characters in the text and by whole lines in the gutter. |
+| Double-click a word | Selects that word. Over empty space the gesture still means Send. |
+| Right-click | Copy / Select all / Clear selection. |
+| **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
+
+Two things fall out of captions being live rather than static text.
+
+A selection is anchored to transcript positions rather than to screen
+coordinates, so it survives the recogniser revising the line you are selecting,
+and survives old lines scrolling out of the pane's 3000-line window.
+
+A selection that reaches the end of the transcript keeps reaching it: words
+recognised while you hold it join the selection rather than landing just outside
+it. Select to the end, let the speaker finish the sentence, and Copy gives you
+the finished sentence. A selection that stops short of the end is left alone.
 
 ### About the hotkey
 
