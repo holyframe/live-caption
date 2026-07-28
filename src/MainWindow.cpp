@@ -518,6 +518,12 @@ void MainWindow::OnCommand(int controlId, int notifyCode) {
             OnCopy();
             return;
 
+        case IDCANCEL:
+            // IsDialogMessage turns Escape into this before the caption pane can
+            // see the key, so the pane's own handler never runs.
+            m_view.ClearSelection();
+            return;
+
         case IDC_CBO_FONT: {
             if (notifyCode != CBN_SELCHANGE) return;
             const int index = static_cast<int>(::SendMessageW(m_fontCombo, CB_GETCURSEL, 0, 0));
@@ -570,8 +576,11 @@ void MainWindow::OnCopy() {
         SetStatus(L"Nothing to copy yet.");
         return;
     }
-    if (CopyTextToClipboard(m_view.FullText())) {
-        SetStatus(L"Transcript copied to the clipboard.");
+    const bool selectionOnly = m_view.HasSelection();
+    const std::wstring text = selectionOnly ? m_view.SelectedText() : m_view.FullText();
+    if (CopyTextToClipboard(text)) {
+        SetStatus(selectionOnly ? L"Selection copied to the clipboard."
+                                : L"Whole transcript copied to the clipboard.");
     } else {
         SetStatus(L"Could not open the clipboard.");
     }
@@ -619,6 +628,8 @@ void MainWindow::OnCaptionUpdate(CaptionUpdate* update) {
 void MainWindow::MaybeCopyRealtime() {
     if (!m_settings.copyRealtime) return;
     if (::GetForegroundWindow() != m_hwnd) return;
+    // Whatever the user just picked out by hand outranks the running transcript.
+    if (m_view.HasSelection()) return;
 
     const ULONGLONG now = ::GetTickCount64();
     if (now - m_lastRealtimeCopyTick < kRealtimeCopyIntervalMs) return;

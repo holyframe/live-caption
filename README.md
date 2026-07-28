@@ -48,12 +48,36 @@ being written.
 | **Press Enter** | When checked, Enter triggers Send. |
 | **Normal View / Compact View** | Toggles a borderless always-on-top mode. The toolbar stays visible so you can switch back. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
-| **Copy real-time if this window is active** | Keeps the clipboard in sync with the transcript while this window is focused, throttled to once every 600 ms. |
+| **Copy real-time if this window is active** | Keeps the clipboard in sync with the transcript while this window is focused, throttled to once every 600 ms. Pauses while you are holding a selection, so it cannot overwrite it. |
 | **Front all** | Brings both this window and the caption source forward. |
 | **Minimize all** | Minimises both. |
-| **Copy** | Copies the whole visible transcript to the clipboard. |
-| Double-click the caption area | Same as Send. |
+| **Copy** | Copies the selection if there is one, otherwise the whole visible transcript. |
+| Double-click empty pane space | Same as Send. |
 | **Ctrl+Shift+Z** | Global hotkey that shows/hides the window. |
+
+### Selecting caption text
+
+The caption pane is a custom Direct2D control rather than an edit box, so
+selection is implemented directly on it:
+
+| Gesture | Behaviour |
+| --- | --- |
+| Drag | Selects across lines. Dragging past the top or bottom edge scrolls. |
+| Shift+click | Extends the selection from the last click. |
+| Double-click a word | Selects that word. Over empty space the gesture still means Send. |
+| Left gutter (50px) | Click or drag to select whole lines, including their line breaks. Arrow cursor; the row under the pointer lights up. |
+| Right-click | Copy / Select all / Clear selection. |
+| **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
+
+A selection is anchored to transcript positions rather than to screen
+coordinates, so it survives the recogniser revising the line you are selecting
+and old lines scrolling out of the pane's 3000-line window. If the selection's
+far end sits at the end of the transcript, it grows as new words arrive —
+whether the last line is rewritten in place or a brand-new line is appended. A
+selection that stops short of the end is left alone.
+
+`tests\selection_test.bat` covers those cases and leaves a screenshot of the
+highlighted pane in `build\`.
 
 ### About the hotkey
 
