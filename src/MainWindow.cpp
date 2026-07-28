@@ -22,8 +22,10 @@ constexpr int kPad          = 8;
 constexpr int kRowHeight    = 23;
 constexpr int kGap          = 6;
 constexpr int kSendWidth    = 92;
-// Strip to the right of the caption scrollbar for control buttons.
-constexpr int kSidePanelWidth = 45;
+// Full-height strip along the right edge, reserved for control buttons.
+constexpr int kRightPanelWidth = 45;
+// Fallback height for the log view when the font metrics are unavailable.
+constexpr int kLogHeight    = 22;
 
 // Dark UI palette, aligned with the caption pane.
 constexpr COLORREF kWindowBg       = RGB(32, 32, 32);
@@ -278,27 +280,38 @@ bool MainWindow::CreateChildren() {
     if (!CaptionView::RegisterWindowClass(m_instance)) return false;
     if (!m_view.Create(m_hwnd, m_instance, IDC_CAPTION_VIEW)) return false;
 
-    m_sidePanel = ::CreateWindowExW(0, WC_STATICW, L"", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10,
-                                    m_hwnd,
-                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SIDE_PANEL)),
-                                    m_instance, nullptr);
-    if (!m_sidePanel) return false;
+    // Both panels are plain backdrops. The bottom one sits under the toolbar
+    // controls, so every control below carries WS_CLIPSIBLINGS and Layout()
+    // keeps the panels at the bottom of the z-order.
+    const auto panel = [&](int id) {
+        return ::CreateWindowExW(0, WC_STATICW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0,
+                                 10, 10, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                 m_instance, nullptr);
+    };
+    m_rightPanel = panel(IDC_RIGHT_PANEL);
+    m_bottomPanel = panel(IDC_BOTTOM_PANEL);
+    if (!m_rightPanel || !m_bottomPanel) return false;
 
     const auto button = [&](const wchar_t* text, int id) {
         return ::CreateWindowExW(0, WC_BUTTONW, text,
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 10, 10,
-                                 m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                 m_instance, nullptr);
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS |
+                                     BS_OWNERDRAW,
+                                 0, 0, 10, 10, m_hwnd,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_instance,
+                                 nullptr);
     };
     const auto check = [&](const wchar_t* text, int id) {
         return ::CreateWindowExW(0, WC_BUTTONW, text,
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, 0, 0, 10, 10,
-                                 m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
-                                 m_instance, nullptr);
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS |
+                                     BS_AUTOCHECKBOX,
+                                 0, 0, 10, 10, m_hwnd,
+                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_instance,
+                                 nullptr);
     };
     const auto combo = [&](int id) {
         return ::CreateWindowExW(0, WC_COMBOBOXW, L"",
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS |
+                                     CBS_DROPDOWNLIST | WS_VSCROLL,
                                  0, 0, 10, 200, m_hwnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_instance,
                                  nullptr);
@@ -313,7 +326,8 @@ bool MainWindow::CreateChildren() {
     m_copyLiveCheck     = check(L"Copy real-time if this window is active", IDC_CHK_COPY_LIVE);
 
     m_hintLabel = ::CreateWindowExW(0, WC_STATICW, L"Double-click empty area to send",
-                                    WS_CHILD | WS_VISIBLE | SS_RIGHT, 0, 0, 10, 10, m_hwnd,
+                                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_RIGHT, 0, 0, 10,
+                                    10, m_hwnd,
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LBL_HINT)),
                                     m_instance, nullptr);
 
@@ -321,8 +335,12 @@ bool MainWindow::CreateChildren() {
     m_sizeCombo    = combo(IDC_CBO_SIZE);
     m_spacingCombo = combo(IDC_CBO_SPACING);
 
-    m_statusBar = ::CreateWindowExW(0, STATUSCLASSNAMEW, L"", WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
-                                    0, 0, 10, 10, m_hwnd,
+    // The log view only spans the left column, so the status bar must not keep
+    // stretching itself across the parent; CCS_NORESIZE hands placement to
+    // Layout(). No size grip either, since the corner belongs to the right panel.
+    m_statusBar = ::CreateWindowExW(0, STATUSCLASSNAMEW, L"",
+                                    WS_CHILD | WS_VISIBLE | CCS_NOPARENTALIGN | CCS_NORESIZE, 0, 0,
+                                    10, 10, m_hwnd,
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUSBAR)),
                                     m_instance, nullptr);
 
@@ -367,8 +385,8 @@ void MainWindow::DiscardThemeBrushes() {
 void MainWindow::ApplyDarkTheme() {
     EnsureThemeBrushes();
 
-    const HWND explorer[] = {m_pressEnterCheck, m_copyLiveCheck, m_hintLabel, m_sidePanel,
-                             m_statusBar, m_view.Handle()};
+    const HWND explorer[] = {m_pressEnterCheck, m_copyLiveCheck, m_hintLabel, m_rightPanel,
+                             m_bottomPanel,     m_statusBar,     m_view.Handle()};
     for (HWND control : explorer) TryDarkControlTheme(control, L"DarkMode_Explorer");
 
     const HWND combos[] = {m_fontCombo, m_sizeCombo, m_spacingCombo};
@@ -385,10 +403,13 @@ LRESULT MainWindow::OnCtlColor(HDC dc, HWND control) {
     EnsureThemeBrushes();
 
     const bool isHint = control == m_hintLabel;
-    const bool isPanel = control == m_sidePanel;
+    // The panels, and the controls that sit on the bottom panel, share its fill.
+    const bool onPanel = control == m_rightPanel || control == m_bottomPanel ||
+                         control == m_hintLabel || control == m_pressEnterCheck ||
+                         control == m_copyLiveCheck;
     const COLORREF text = isHint ? kTextSecondary : kTextPrimary;
-    const COLORREF background = isPanel ? kPanelBg : kWindowBg;
-    const HBRUSH brush = isPanel ? m_panelBrush : m_windowBrush;
+    const COLORREF background = onPanel ? kPanelBg : kWindowBg;
+    const HBRUSH brush = onPanel ? m_panelBrush : m_windowBrush;
 
     ::SetTextColor(dc, text);
     ::SetBkColor(dc, background);
@@ -500,6 +521,18 @@ void MainWindow::PopulateSpacingCombo() {
     ::SendMessageW(m_spacingCombo, CB_SETCURSEL, static_cast<WPARAM>(selected), 0);
 }
 
+int MainWindow::LogBarHeight() const {
+    int height = Scaled(kLogHeight);
+    if (const HDC dc = ::GetDC(m_hwnd)) {
+        const HGDIOBJ previous = m_controlFont ? ::SelectObject(dc, m_controlFont) : nullptr;
+        TEXTMETRICW metrics{};
+        if (::GetTextMetricsW(dc, &metrics)) height = metrics.tmHeight + Scaled(8);
+        if (previous) ::SelectObject(dc, previous);
+        ::ReleaseDC(m_hwnd, dc);
+    }
+    return height;
+}
+
 void MainWindow::Layout() {
     if (!m_hwnd || !m_statusBar) return;
 
@@ -508,29 +541,34 @@ void MainWindow::Layout() {
     const int clientWidth = client.right - client.left;
     const int clientHeight = client.bottom - client.top;
 
-    // Status bar sizes itself; ask it how tall it ended up.
-    ::SendMessageW(m_statusBar, WM_SIZE, 0, 0);
-    RECT statusRect{};
-    ::GetWindowRect(m_statusBar, &statusRect);
-    const int statusHeight = statusRect.bottom - statusRect.top;
-
     const int pad = Scaled(kPad);
     const int gap = Scaled(kGap);
     const int rowHeight = Scaled(kRowHeight);
     const int barHeight = Scaled(kBarHeight);
+    const int logHeight = LogBarHeight();
 
-    const int barTop = std::max(clientHeight - statusHeight - barHeight, 0);
-    const int viewHeight = std::max(barTop, 0);
-    const int sidePanelWidth = Scaled(kSidePanelWidth);
-    const int viewWidth = std::max(clientWidth - sidePanelWidth, 0);
+    // The right panel runs the full height of the window. Everything else
+    // stacks inside the column left of it: caption pane, bottom panel, log view.
+    const int rightPanelWidth = Scaled(kRightPanelWidth);
+    const int columnWidth = std::max(clientWidth - rightPanelWidth, 0);
+    const int logTop = std::max(clientHeight - logHeight, 0);
+    const int barTop = std::max(logTop - barHeight, 0);
+    const int viewHeight = barTop;
 
     if (m_view.Handle()) {
-        ::SetWindowPos(m_view.Handle(), nullptr, 0, 0, viewWidth, viewHeight,
+        ::SetWindowPos(m_view.Handle(), nullptr, 0, 0, columnWidth, viewHeight,
                        SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    if (m_sidePanel) {
-        ::SetWindowPos(m_sidePanel, nullptr, viewWidth, 0, sidePanelWidth, viewHeight,
-                       SWP_NOZORDER | SWP_NOACTIVATE);
+    // Both panels are backdrops, so keep them under their contents.
+    if (m_bottomPanel) {
+        ::SetWindowPos(m_bottomPanel, HWND_BOTTOM, 0, barTop, columnWidth,
+                       std::max(logTop - barTop, 0), SWP_NOACTIVATE);
+    }
+    ::SetWindowPos(m_statusBar, nullptr, 0, logTop, columnWidth,
+                   std::max(clientHeight - logTop, 0), SWP_NOZORDER | SWP_NOACTIVATE);
+    if (m_rightPanel) {
+        ::SetWindowPos(m_rightPanel, HWND_BOTTOM, columnWidth, 0, rightPanelWidth, clientHeight,
+                       SWP_NOACTIVATE);
     }
 
     const int row1Top = barTop + Scaled(4);
@@ -554,7 +592,7 @@ void MainWindow::Layout() {
         cursor -= gap;
     };
 
-    int cursor = clientWidth - pad;
+    int cursor = columnWidth - pad;
     placeRight(m_spacingCombo, cursor, row1Top, Scaled(62), rowHeight);
     placeRight(m_sizeCombo, cursor, row1Top, Scaled(62), rowHeight);
     placeRight(m_fontCombo, cursor, row1Top, Scaled(140), rowHeight);
@@ -563,7 +601,7 @@ void MainWindow::Layout() {
     ::SetWindowPos(m_hintLabel, nullptr, leftBlockEnd, row1Top + Scaled(4), hintWidth, rowHeight,
                    SWP_NOZORDER | SWP_NOACTIVATE);
 
-    cursor = clientWidth - pad;
+    cursor = columnWidth - pad;
     placeRight(m_copyButton, cursor, row2Top, Scaled(70), rowHeight);
     placeRight(m_minimizeAllButton, cursor, row2Top, Scaled(90), rowHeight);
     placeRight(m_frontAllButton, cursor, row2Top, Scaled(76), rowHeight);

@@ -14,7 +14,8 @@
 #define IDC_BTN_MINIMIZE_ALL  1011
 #define IDC_BTN_COPY          1012
 #define IDC_STATUSBAR         1013
-#define IDC_SIDE_PANEL        1014
+#define IDC_RIGHT_PANEL       1014
+#define IDC_BOTTOM_PANEL      1015
 
 // ---- Global hotkey --------------------------------------------------------
 #define HOTKEY_TOGGLE_VIEW    0xB001

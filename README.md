@@ -39,8 +39,10 @@ Start Chrome's Live Caption or Windows 11's Live captions, then launch
 `LiveCaptionView.exe`. It polls for a supported caption window and attaches
 automatically; if the source closes, it reconnects on its own.
 
-The status bar reports which source is attached and where the transcript is
-being written.
+The window is split into a full-height right panel, reserved for control
+buttons, and a column beside it holding the caption pane, the toolbar's bottom
+panel, and the log view along the foot. The log view reports which source is
+attached and where the transcript is being written.
 
 | Control | Behaviour |
 | --- | --- |
@@ -66,7 +68,7 @@ selection is implemented directly on it:
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
 | Left gutter (75px) | Click or drag to select whole lines, including their line breaks. Arrow cursor; the row under the pointer lights up. |
-| Right panel (45px) | Strip to the right of the scrollbar, reserved for control buttons. |
+| Right panel (45px) | Full-height strip to the right of the scrollbar, reserved for control buttons. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
 
