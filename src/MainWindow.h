@@ -43,6 +43,8 @@ private:
 
     void OnCommand(int controlId, int notifyCode);
     void OnSend();
+    void OnSettings();
+    void OnPickWindow();
     void OnCopy();
     void OnCaptionUpdate(CaptionUpdate* update);
     void MaybeCopyRealtime();
@@ -66,6 +68,8 @@ private:
     HWND m_spacingCombo = nullptr;
     HWND m_rightPanel = nullptr;
     HWND m_bottomPanel = nullptr;
+    HWND m_settingsButton = nullptr;
+    HWND m_pickWindowButton = nullptr;
     HWND m_statusBar = nullptr;
 
     HBRUSH m_windowBrush = nullptr;

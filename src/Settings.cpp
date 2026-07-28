@@ -70,7 +70,10 @@ void Settings::Load() {
     windowH = ReadInt(L"WindowH", windowH, file);
 
     bottomPanelHeight = ReadInt(L"BottomPanelHeight", bottomPanelHeight, file);
-    if (bottomPanelHeight < 58 || bottomPanelHeight > 2000) bottomPanelHeight = 58;
+    // Drop the old two-row default (58) and the brief post-simplify default (38)
+    // down to the single-row fit.
+    if (bottomPanelHeight == 58 || bottomPanelHeight == 38) bottomPanelHeight = 32;
+    if (bottomPanelHeight < 32 || bottomPanelHeight > 2000) bottomPanelHeight = 32;
 }
 
 void Settings::Save() const {

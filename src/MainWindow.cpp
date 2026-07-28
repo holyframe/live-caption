@@ -16,14 +16,18 @@ namespace {
 constexpr const wchar_t* kClassName = L"LiveCaptionViewMain";
 constexpr const wchar_t* kBaseTitle = L"Live Caption App";
 
-// Unscaled (96 dpi) toolbar geometry.
-constexpr int kBarHeight    = 38;
+// Unscaled (96 dpi) toolbar geometry. The bottom panel's minimum height is
+// exactly the button row plus the top/bottom insets used when laying it out.
 constexpr int kPad          = 8;
 constexpr int kRowHeight    = 23;
+constexpr int kBarTopPad    = 4;
+constexpr int kBarBottomPad = 5;
+constexpr int kBarHeight    = kBarTopPad + kRowHeight + kBarBottomPad;
 constexpr int kGap          = 6;
 constexpr int kSendWidth    = 92;
 // Full-height strip along the right edge, reserved for control buttons.
 constexpr int kRightPanelWidth = 45;
+constexpr int kRightButtonSize = 32;
 // Fallback height for the log view when the font metrics are unavailable.
 constexpr int kLogHeight    = 22;
 // Draggable strip between the caption pane and the bottom panel, and the
@@ -372,6 +376,9 @@ bool MainWindow::CreateChildren() {
 
     m_sendButton      = button(L"Send", IDC_BTN_SEND);
     m_pressEnterCheck = check(L"Press Enter", IDC_CHK_PRESS_ENTER);
+    // Caption text doubles as the accessible name; DrawDarkButton paints icons.
+    m_settingsButton    = button(L"Settings", IDC_BTN_SETTINGS);
+    m_pickWindowButton  = button(L"Pick up window", IDC_BTN_PICK_WINDOW);
 
     m_hintLabel = ::CreateWindowExW(0, WC_STATICW, L"Double-click empty area to send",
                                     WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_RIGHT, 0, 0, 10,
@@ -392,7 +399,10 @@ bool MainWindow::CreateChildren() {
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUSBAR)),
                                     m_instance, nullptr);
 
-    if (!m_sendButton || !m_fontCombo || !m_statusBar) return false;
+    if (!m_sendButton || !m_settingsButton || !m_pickWindowButton || !m_fontCombo ||
+        !m_statusBar) {
+        return false;
+    }
 
     ::SendMessageW(m_pressEnterCheck, BM_SETCHECK, m_settings.pressEnter ? BST_CHECKED : BST_UNCHECKED, 0);
 
@@ -484,16 +494,37 @@ void MainWindow::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
     ::SelectObject(item.hDC, oldPen);
     ::DeleteObject(border);
 
-    wchar_t text[128]{};
-    ::GetWindowTextW(item.hwndItem, text, 128);
-
     ::SetBkMode(item.hDC, TRANSPARENT);
     ::SetTextColor(item.hDC, disabled ? kTextSecondary : kTextPrimary);
-    if (m_controlFont) ::SelectObject(item.hDC, m_controlFont);
 
-    RECT textRc = item.rcItem;
-    if (pressed) ::OffsetRect(&textRc, 1, 1);
-    ::DrawTextW(item.hDC, text, -1, &textRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    RECT contentRc = item.rcItem;
+    if (pressed) ::OffsetRect(&contentRc, 1, 1);
+
+    // Right-panel icon buttons use Segoe MDL2 Assets glyphs.
+    const wchar_t* iconGlyph = nullptr;
+    if (item.hwndItem == m_settingsButton) {
+        iconGlyph = L"\uE713";  // Settings (gear)
+    } else if (item.hwndItem == m_pickWindowButton) {
+        iconGlyph = L"\uE78B";  // Window with up-arrow (pick up / raise window)
+    }
+
+    if (iconGlyph) {
+        const int iconPx = std::max(Scaled(16), 12);
+        HFONT iconFont = ::CreateFontW(-iconPx, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                                       L"Segoe MDL2 Assets");
+        const HGDIOBJ oldFont = iconFont ? ::SelectObject(item.hDC, iconFont) : nullptr;
+        ::DrawTextW(item.hDC, iconGlyph, 1, &contentRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (oldFont) ::SelectObject(item.hDC, oldFont);
+        if (iconFont) ::DeleteObject(iconFont);
+    } else {
+        wchar_t text[128]{};
+        ::GetWindowTextW(item.hwndItem, text, 128);
+        if (m_controlFont) ::SelectObject(item.hDC, m_controlFont);
+        ::DrawTextW(item.hDC, text, -1, &contentRc,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
 
     if (focused && !pressed) {
         RECT focusRc = item.rcItem;
@@ -658,10 +689,24 @@ void MainWindow::Layout() {
                        SWP_NOACTIVATE);
     }
 
+    // Right-panel icon buttons: window picker at the top, settings gear at the foot.
+    const int buttonSize = Scaled(kRightButtonSize);
+    const int buttonLeft = columnWidth + std::max((rightPanelWidth - buttonSize) / 2, 0);
+    if (m_pickWindowButton) {
+        ::SetWindowPos(m_pickWindowButton, nullptr, buttonLeft, pad, buttonSize, buttonSize,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    if (m_settingsButton) {
+        const int buttonTop = std::max(clientHeight - pad - buttonSize, 0);
+        ::SetWindowPos(m_settingsButton, nullptr, buttonLeft, buttonTop, buttonSize, buttonSize,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
     // The toolbar hugs the foot of the bottom panel. A taller panel then opens
     // space under the splitter rather than carrying the controls up with it, so
     // they stay under the pointer while the caption pane is being resized.
-    const int rowTop = std::max(logTop - Scaled(5) - rowHeight, barTop + Scaled(4));
+    const int rowTop =
+        std::max(logTop - Scaled(kBarBottomPad) - rowHeight, barTop + Scaled(kBarTopPad));
 
     // Left block: Send with the Press Enter option beside it.
     int left = pad;
@@ -772,6 +817,14 @@ void MainWindow::OnCommand(int controlId, int notifyCode) {
             OnSend();
             return;
 
+        case IDC_BTN_SETTINGS:
+            OnSettings();
+            return;
+
+        case IDC_BTN_PICK_WINDOW:
+            OnPickWindow();
+            return;
+
         case IDC_CHK_PRESS_ENTER:
             m_settings.pressEnter =
                 ::SendMessageW(m_pressEnterCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -833,6 +886,16 @@ void MainWindow::OnSend() {
     // Intentionally inert for now: the destination for "Send" is still to be
     // specified. Wire the real behaviour in here.
     SetStatus(L"Send is not wired up yet.");
+}
+
+void MainWindow::OnSettings() {
+    // Placeholder until a settings surface exists.
+    SetStatus(L"Settings is not wired up yet.");
+}
+
+void MainWindow::OnPickWindow() {
+    // Placeholder until window picking is implemented.
+    SetStatus(L"Pick up window is not wired up yet.");
 }
 
 void MainWindow::OnCopy() {

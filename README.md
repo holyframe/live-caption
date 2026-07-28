@@ -55,6 +55,8 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 | **Send** | Placeholder — deliberately does nothing yet. |
 | **Press Enter** | When checked, Enter triggers Send. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
+| **Settings** (right panel) | Gear button at the foot of the right strip. Placeholder for now. |
+| **Pick window** (right panel) | Window pick-up button at the top of the right strip. Placeholder for now. |
 | Double-click empty pane space | Same as Send. |
 | **Ctrl+Shift+Z** | Global hotkey that shows/hides the window. |
 
@@ -69,7 +71,7 @@ selection is implemented directly on it:
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
 | Left gutter (75px) | Click or drag to select whole lines, including their line breaks. Arrow cursor; the row under the pointer lights up. |
-| Right panel (45px) | Full-height strip to the right of the scrollbar, reserved for control buttons. |
+| Right panel (45px) | Full-height strip to the right of the scrollbar, with Pick window at the top and Settings at the bottom. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
 
