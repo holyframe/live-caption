@@ -1,0 +1,13 @@
+build/
+dist/
+out/
+bin/
+.vs/
+*.user
+*.suo
+*.exe
+*.pdb
+*.ilk
+*.obj
+captions.txt
+LiveCaptionView.ini
