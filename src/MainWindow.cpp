@@ -700,6 +700,7 @@ bool MainWindow::CreateChildren() {
     // Caption text doubles as the accessible name; DrawDarkButton paints icons.
     m_saveButton        = button(L"Save captions", IDC_BTN_SAVE);
     m_clearButton       = button(L"Clear captions", IDC_BTN_CLEAR);
+    m_listenButton      = button(L"Stop caption listening", IDC_BTN_LISTEN);
     m_settingsButton    = button(L"Settings", IDC_BTN_SETTINGS);
     m_pickWindowButton  = button(L"Pick up window", IDC_BTN_PICK_WINDOW);
     m_selectedWindowIconView =
@@ -742,8 +743,8 @@ bool MainWindow::CreateChildren() {
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUSBAR)),
                                     m_instance, nullptr);
 
-    if (!m_sendButton || !m_saveButton || !m_clearButton || !m_settingsButton ||
-        !m_pickWindowButton ||
+    if (!m_sendButton || !m_saveButton || !m_clearButton || !m_listenButton ||
+        !m_settingsButton || !m_pickWindowButton ||
         !m_selectedWindowIconView || !m_fontCombo || !m_statusBar) {
         return false;
     }
@@ -874,6 +875,8 @@ void MainWindow::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
         iconGlyph = L"\uE74E";  // Save (disk)
     } else if (item.hwndItem == m_clearButton) {
         iconGlyph = L"\uE74D";  // Delete / clear
+    } else if (item.hwndItem == m_listenButton) {
+        iconGlyph = m_engine.IsPaused() ? L"\uE768" : L"\uE71A";  // Play / Stop
     } else if (item.hwndItem == m_settingsButton) {
         iconGlyph = L"\uE713";  // Settings (gear)
     } else if (item.hwndItem == m_pickWindowButton) {
@@ -1111,6 +1114,11 @@ void MainWindow::Layout() {
         ::SetWindowPos(m_saveButton, nullptr, buttonLeft, rightButtonTop, buttonSize, buttonSize,
                        SWP_NOZORDER | SWP_NOACTIVATE);
     }
+    rightButtonTop -= buttonSize + gap;
+    if (m_listenButton) {
+        ::SetWindowPos(m_listenButton, nullptr, buttonLeft, rightButtonTop, buttonSize, buttonSize,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 
     // The toolbar hugs the foot of the bottom panel. A taller panel then opens
     // space under the splitter rather than carrying the controls up with it, so
@@ -1244,6 +1252,10 @@ void MainWindow::OnCommand(int controlId, int notifyCode) {
 
         case IDC_BTN_CLEAR:
             OnClear();
+            return;
+
+        case IDC_BTN_LISTEN:
+            OnToggleListening();
             return;
 
         case IDC_BTN_SETTINGS:
@@ -1420,6 +1432,23 @@ void MainWindow::OnClear() {
     DrainPendingPayloads();
     m_view.Clear();
     SetStatus(L"Caption pane cleared.");
+}
+
+void MainWindow::OnToggleListening() {
+    const bool pause = !m_engine.IsPaused();
+    m_engine.SetPaused(pause);
+    UpdateListeningButton();
+
+    SetStatus(pause ? L"Caption listening stopped. Existing text is preserved."
+                    : L"Caption listening resumed.");
+}
+
+void MainWindow::UpdateListeningButton() {
+    if (!m_listenButton) return;
+    ::SetWindowTextW(m_listenButton,
+                     m_engine.IsPaused() ? L"Resume caption listening"
+                                         : L"Stop caption listening");
+    ::InvalidateRect(m_listenButton, nullptr, TRUE);
 }
 
 void MainWindow::OnSettings() {

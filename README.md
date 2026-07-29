@@ -57,6 +57,7 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
 | **Save** (right panel) | Opens Save As with `{save time} - {picked tab name}.txt` prefilled. |
 | **Clear** (right panel) | Clears the currently displayed captions. |
+| **Stop / Resume listening** (right panel) | Pauses or resumes reads from the selected live-caption source without clearing existing text. |
 | **Settings** (right panel) | Opens caption-source, theme, and Send-hotkey preferences. |
 | **Pick window** (right panel) | Drag onto a browser/WebView window to select its active tab. The selected window's icon appears beneath the unchanged picker button. |
 | Double-click empty pane space | Same as Send. |
@@ -73,7 +74,7 @@ selection is implemented directly on it:
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
 | Left gutter (75px) | Click or drag to select whole lines, including their line breaks. Arrow cursor; the row under the pointer lights up. |
-| Right panel (45px) | Full-height strip to the right of the scrollbar, with Pick window and the selected target icon at the top and Save, Clear, and Settings at the bottom. |
+| Right panel (45px) | Full-height strip with Pick window and the selected target icon at the top, plus listening, Save, Clear, and Settings controls at the bottom. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
 

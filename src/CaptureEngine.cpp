@@ -23,11 +23,14 @@ bool CaptureEngine::Start(HWND notifyWindow, const std::wstring& transcriptPath,
     m_sourceChoice = sourceChoice;
     m_stopEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);   // manual reset
     m_changeEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);  // auto reset
-    if (!m_stopEvent || !m_changeEvent) {
+    m_controlEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);  // auto reset
+    if (!m_stopEvent || !m_changeEvent || !m_controlEvent) {
         if (m_stopEvent) ::CloseHandle(m_stopEvent);
         if (m_changeEvent) ::CloseHandle(m_changeEvent);
+        if (m_controlEvent) ::CloseHandle(m_controlEvent);
         m_stopEvent = nullptr;
         m_changeEvent = nullptr;
+        m_controlEvent = nullptr;
         return false;
     }
 
@@ -47,8 +50,19 @@ void CaptureEngine::Stop() {
         ::CloseHandle(m_changeEvent);
         m_changeEvent = nullptr;
     }
+    if (m_controlEvent) {
+        ::CloseHandle(m_controlEvent);
+        m_controlEvent = nullptr;
+    }
     m_running.store(false, std::memory_order_release);
     m_sourceWindow.store(nullptr, std::memory_order_release);
+}
+
+void CaptureEngine::SetPaused(bool paused) {
+    m_paused.store(paused, std::memory_order_release);
+    // Wake either AwaitChange() or the indefinite paused wait so the new state
+    // takes effect immediately.
+    if (m_controlEvent) ::SetEvent(m_controlEvent);
 }
 
 bool CaptureEngine::Sleep(DWORD milliseconds) {
@@ -56,8 +70,8 @@ bool CaptureEngine::Sleep(DWORD milliseconds) {
 }
 
 bool CaptureEngine::AwaitChange() {
-    const HANDLE handles[2] = {m_stopEvent, m_changeEvent};
-    const DWORD result = ::WaitForMultipleObjects(2, handles, FALSE, m_pollIntervalMs);
+    const HANDLE handles[3] = {m_stopEvent, m_changeEvent, m_controlEvent};
+    const DWORD result = ::WaitForMultipleObjects(3, handles, FALSE, m_pollIntervalMs);
     if (result == WAIT_OBJECT_0) return false;  // stop requested
 
     if (result == WAIT_OBJECT_0 + 1) {
@@ -71,6 +85,8 @@ bool CaptureEngine::AwaitChange() {
         // Rate-limit so a very chatty provider cannot monopolise the thread.
         if (!Sleep(kMinReadIntervalMs)) return false;
     }
+    // WAIT_OBJECT_0 + 2 is a pause/resume request. Return to the top of the
+    // capture loop, which observes the new atomic state.
     return true;
 }
 
@@ -102,6 +118,14 @@ void CaptureEngine::Run(std::wstring transcriptPath) {
     bool       searchingAnnounced = false;
 
     for (;;) {
+        if (m_paused.load(std::memory_order_acquire)) {
+            // Do no window discovery and no cross-process text reads while
+            // paused. Resume and Stop both wake this wait immediately.
+            const HANDLE handles[2] = {m_stopEvent, m_controlEvent};
+            if (::WaitForMultipleObjects(2, handles, FALSE, INFINITE) == WAIT_OBJECT_0) break;
+            continue;
+        }
+
         if (!m_source.IsAttached()) {
             if (!searchingAnnounced) {
                 PostStatus(m_sourceChoice == CaptionSourceChoice::Chrome

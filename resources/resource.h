@@ -21,6 +21,7 @@
 #define IDC_SELECTED_WINDOW   1018
 #define IDC_BTN_SAVE          1019
 #define IDC_BTN_CLEAR         1020
+#define IDC_BTN_LISTEN        1021
 
 // ---- Global hotkey --------------------------------------------------------
 #define HOTKEY_SEND           0xB001

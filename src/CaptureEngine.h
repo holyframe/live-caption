@@ -35,8 +35,10 @@ public:
     bool Start(HWND notifyWindow, const std::wstring& transcriptPath, int pollIntervalMs,
                CaptionSourceChoice sourceChoice);
     void Stop();
+    void SetPaused(bool paused);
 
     bool IsRunning() const { return m_running.load(std::memory_order_acquire); }
+    bool IsPaused() const { return m_paused.load(std::memory_order_acquire); }
     HWND SourceWindow() const { return m_sourceWindow.load(std::memory_order_acquire); }
 
 private:
@@ -62,8 +64,10 @@ private:
     std::thread        m_thread;
     HANDLE             m_stopEvent = nullptr;
     HANDLE             m_changeEvent = nullptr;
+    HANDLE             m_controlEvent = nullptr;
     HWND               m_notifyWindow = nullptr;
     std::atomic<bool>  m_running{false};
+    std::atomic<bool>  m_paused{false};
     std::atomic<HWND>  m_sourceWindow{nullptr};
 
     CaptionSource   m_source;

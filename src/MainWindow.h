@@ -54,6 +54,8 @@ private:
     void OnSend();
     void OnSave();
     void OnClear();
+    void OnToggleListening();
+    void UpdateListeningButton();
     void OnSettings();
     void OnPickWindow();
     void BeginWindowPick();
@@ -94,6 +96,7 @@ private:
     HWND m_bottomPanel = nullptr;
     HWND m_saveButton = nullptr;
     HWND m_clearButton = nullptr;
+    HWND m_listenButton = nullptr;
     HWND m_settingsButton = nullptr;
     HWND m_pickWindowButton = nullptr;
     HWND m_selectedWindowIconView = nullptr;
