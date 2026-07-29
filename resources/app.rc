@@ -4,24 +4,30 @@
 // Embed the application manifest (common controls v6 + per-monitor DPI).
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "app.manifest"
 
-IDD_SETTINGS DIALOGEX 0, 0, 278, 157
+IDD_SETTINGS DIALOGEX 0, 0, 360, 194
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Settings"
 FONT 9, "Segoe UI"
 BEGIN
-    LTEXT           "Caption source", -1, 12, 18, 66, 10
-    COMBOBOX        IDC_CBO_SOURCE, 84, 14, 178, 80,
+    LTEXT           "Caption source", -1, 12, 18, 72, 10
+    COMBOBOX        IDC_CBO_SOURCE, 90, 14, 258, 80,
                     CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Choose which live-caption window this app reads.", -1, 84, 34, 178, 18
-    LTEXT           "Theme", -1, 12, 64, 66, 10
-    COMBOBOX        IDC_CBO_THEME, 84, 60, 178, 70,
+    LTEXT           "Choose which live-caption window this app reads.", -1, 90, 34, 258, 18
+    LTEXT           "Theme", -1, 12, 64, 72, 10
+    COMBOBOX        IDC_CBO_THEME, 90, 60, 258, 70,
                     CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Hotkey", -1, 12, 94, 66, 10
+    LTEXT           "Hotkey", -1, 12, 94, 72, 10
     CONTROL         "", IDC_EDT_HOTKEY, "msctls_hotkey32",
-                    WS_BORDER | WS_TABSTOP, 84, 90, 91, 14
-    PUSHBUTTON      "Change...", IDC_BTN_HOTKEY_CHANGE, 181, 89, 81, 16, WS_TABSTOP
-    DEFPUSHBUTTON   "OK", IDOK, 151, 128, 53, 18, WS_TABSTOP
-    PUSHBUTTON      "Cancel", IDCANCEL, 209, 128, 53, 18, WS_TABSTOP
+                    WS_BORDER | WS_TABSTOP, 90, 90, 145, 14
+    PUSHBUTTON      "Change...", IDC_BTN_HOTKEY_CHANGE, 241, 89, 107, 16, WS_TABSTOP
+    LTEXT           "Save folder", -1, 12, 124, 72, 10
+    EDITTEXT        IDC_EDT_SAVE_FOLDER, 90, 120, 194, 14,
+                    ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Browse...", IDC_BTN_SAVE_FOLDER, 290, 119, 58, 16, WS_TABSTOP
+    LTEXT           "Save creates a timestamped file named after the picked tab.", -1,
+                    90, 140, 258, 18
+    DEFPUSHBUTTON   "OK", IDOK, 237, 165, 53, 18, WS_TABSTOP
+    PUSHBUTTON      "Cancel", IDCANCEL, 295, 165, 53, 18, WS_TABSTOP
 END
 
 VS_VERSION_INFO VERSIONINFO

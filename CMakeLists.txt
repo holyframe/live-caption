@@ -14,6 +14,7 @@ add_executable(LiveCaptionView WIN32
     src/Util.cpp
     src/Settings.cpp
     src/SettingsDialog.cpp
+    src/CaptionSave.cpp
     src/CaptionMerger.cpp
     src/TranscriptStore.cpp
     src/CaptionSource.cpp
@@ -46,7 +47,7 @@ target_link_libraries(LiveCaptionView PRIVATE
     shlwapi
     uxtheme
     advapi32
-    comdlg32
+    shell32
 )
 
 if(MSVC)

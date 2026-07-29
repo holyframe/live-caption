@@ -41,6 +41,11 @@ std::wstring Settings::ResolvedTranscriptPath() const {
     return util::ExecutableDirectory() + L"\\captions.txt";
 }
 
+std::wstring Settings::ResolvedSaveFolder() const {
+    if (!saveFolder.empty()) return saveFolder;
+    return util::ExecutableDirectory() + L"\\script";
+}
+
 void Settings::Load() {
     const std::wstring file = FilePath();
     if (::GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES) return;
@@ -67,6 +72,7 @@ void Settings::Load() {
     alwaysOnTop  = ReadInt(L"AlwaysOnTop", alwaysOnTop ? 1 : 0, file) != 0;
 
     transcriptPath = ReadString(L"TranscriptPath", L"", file);
+    saveFolder = ReadString(L"SaveFolder", L"", file);
 
     pollIntervalMs = ReadInt(L"PollIntervalMs", pollIntervalMs, file);
     if (pollIntervalMs < 1 || pollIntervalMs > 1000) pollIntervalMs = 8;
@@ -108,6 +114,7 @@ void Settings::Save() const {
     WriteInt(L"CompactView", compactView ? 1 : 0, file);
     WriteInt(L"AlwaysOnTop", alwaysOnTop ? 1 : 0, file);
     WriteString(L"TranscriptPath", transcriptPath, file);
+    WriteString(L"SaveFolder", saveFolder, file);
     WriteInt(L"PollIntervalMs", pollIntervalMs, file);
 
     WriteInt(L"SendHotkeyModifiers", static_cast<int>(hotkeyModifiers), file);

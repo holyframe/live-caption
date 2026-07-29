@@ -25,6 +25,8 @@ struct Settings {
     bool         compactView  = false;
     bool         alwaysOnTop  = false;
     std::wstring transcriptPath;   // empty means "captions.txt" beside the exe
+    // Folder used by the Save button. Empty means "script" beside the exe.
+    std::wstring saveFolder;
 
     // How often the caption source is re-read, in milliseconds.
     //
@@ -49,4 +51,5 @@ struct Settings {
 
     static std::wstring FilePath();
     std::wstring ResolvedTranscriptPath() const;
+    std::wstring ResolvedSaveFolder() const;
 };

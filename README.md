@@ -55,7 +55,7 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 | **Send** | Replaces the picked web tab's chat input with the selected caption text. |
 | **Press Enter** | Also presses Enter in the picked chat input after inserting the selection. Enter in this app triggers Send when checked. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
-| **Save** (right panel) | Exports the currently displayed captions to a UTF-8 text file. |
+| **Save** (right panel) | Saves the displayed captions as `{save time} - {picked tab name}.txt`. |
 | **Clear** (right panel) | Clears the currently displayed captions. |
 | **Settings** (right panel) | Opens caption-source, theme, and Send-hotkey preferences. |
 | **Pick window** (right panel) | Drag onto a browser/WebView window to select its active tab. The selected window's icon appears beneath the unchanged picker button. |
@@ -124,11 +124,13 @@ The Settings window chooses Windows 11 Live Captions or Chrome Live Caption as
 the sole capture source. The choice is strict: Windows mode only attaches to
 `LiveCaptions.exe`, while Chrome mode only attaches to a Live Caption window
 owned by `chrome.exe`. It also switches the app between Dark, Light, and System
-themes and configures the Send hotkey. Preferences live in
+themes, configures the Send hotkey, and selects the folder used by Save. The
+default save folder is `script` beside `LiveCaptionView.exe`; it is created on
+the first save. Preferences live in
 `LiveCaptionView.ini` next to the executable along with font, size, line
 spacing, checkbox states, window position, `BottomPanelHeight` (where the
 caption/bottom-panel divider sits, in 96 dpi units), `TranscriptPath` (blank
-means `captions.txt` beside the executable), and `PollIntervalMs` (how often the
+means `captions.txt` beside the executable), `SaveFolder`, and `PollIntervalMs` (how often the
 caption source is re-read; default 8, see [Staying real-time](#staying-real-time)).
 
 ## How it works

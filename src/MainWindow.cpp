@@ -1,16 +1,17 @@
 #include "MainWindow.h"
 
 #include <commctrl.h>
-#include <commdlg.h>
 #include <dwmapi.h>
 #include <uxtheme.h>
 #include <windowsx.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <set>
 
-#include "Util.h"
+#include "CaptionSave.h"
 #include "SettingsDialog.h"
+#include "Util.h"
 #include "resource.h"
 
 namespace {
@@ -1351,22 +1352,25 @@ void MainWindow::OnSave() {
         return;
     }
 
-    wchar_t path[32768] = L"captions.txt";
-    OPENFILENAMEW dialog{};
-    dialog.lStructSize = sizeof(dialog);
-    dialog.hwndOwner = m_hwnd;
-    dialog.lpstrFilter = L"Text files (*.txt)\0*.txt\0All files (*.*)\0*.*\0\0";
-    dialog.lpstrFile = path;
-    dialog.nMaxFile = static_cast<DWORD>(std::size(path));
-    dialog.lpstrDefExt = L"txt";
-    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!::GetSaveFileNameW(&dialog)) return;
+    const std::filesystem::path folder(m_settings.ResolvedSaveFolder());
+    std::error_code directoryError;
+    if (!std::filesystem::exists(folder, directoryError)) {
+        std::filesystem::create_directories(folder, directoryError);
+    }
+    if (directoryError || !std::filesystem::is_directory(folder, directoryError)) {
+        SetStatus(L"Could not create or access the configured caption save folder.");
+        return;
+    }
 
+    SYSTEMTIME saveTime{};
+    ::GetLocalTime(&saveTime);
+    const std::filesystem::path path =
+        folder / caption_save::BuildFileName(saveTime, m_webInputPicker.SelectedName());
     const HANDLE file =
-        ::CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
+        ::CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW,
                       FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
-        SetStatus(L"Could not create the selected caption file.");
+        SetStatus(L"Could not create the caption file in the configured save folder.");
         return;
     }
 
@@ -1382,7 +1386,7 @@ void MainWindow::OnSave() {
     }
     ::CloseHandle(file);
 
-    SetStatus(saved ? std::wstring(L"Saved captions to ") + path
+    SetStatus(saved ? std::wstring(L"Saved captions to ") + path.wstring()
                     : L"Could not finish writing the caption file.");
 }
 

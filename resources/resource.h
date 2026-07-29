@@ -31,6 +31,8 @@
 #define IDC_CBO_THEME         2003
 #define IDC_EDT_HOTKEY        2004
 #define IDC_BTN_HOTKEY_CHANGE 2005
+#define IDC_EDT_SAVE_FOLDER   2006
+#define IDC_BTN_SAVE_FOLDER   2007
 
 // ---- Private window messages ---------------------------------------------
 // WM_APP_CAPTION_UPDATE : wParam unused, lParam = CaptionUpdate* (receiver owns)
