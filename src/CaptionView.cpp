@@ -476,14 +476,21 @@ void CaptionView::QueueUpdate(size_t firstDirtyLine, std::vector<std::wstring> l
 
     // Translate the transcript-absolute index into our trimmed window.
     size_t local = 0;
-    if (firstDirtyLine >= m_lineOffset) {
-        local = firstDirtyLine - m_lineOffset;
-        if (local > m_lines.size()) local = m_lines.size();
-    } else {
-        // The dirty region predates what we still hold; rebuild everything.
+    const size_t heldEnd = m_lineOffset + m_lines.size();
+    if (m_lines.empty() || firstDirtyLine < m_lineOffset || firstDirtyLine > heldEnd) {
+        // Clear() deliberately forgets the absolute index of the text it
+        // removed. The first later update may therefore begin at line 40 (for
+        // example), rather than zero. Rebase the empty model onto that absolute
+        // index. The same rule repairs a genuine gap caused by missed updates.
+        //
+        // Clamping a gapped index to m_lines.size() looks harmless, but after a
+        // clear it turns every rewrite of the same live sentence into another
+        // appended line: "Because", "Because believing", ...
         m_lines.clear();
         m_lineOffset = firstDirtyLine;
         local = 0;
+    } else {
+        local = firstDirtyLine - m_lineOffset;
     }
 
     m_lines.resize(local);

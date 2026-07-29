@@ -193,6 +193,23 @@ int main() {
     view.Present();
     Pump(60);
 
+    // --- Clear followed by an absolute-index update -----------------------
+    // The capture merger retains its absolute transcript position when only
+    // the pane is cleared. Revisions of that same line must replace one
+    // another, not accumulate as progressive fragments.
+    view.Clear();
+    view.QueueUpdate(40, {L"Because"});
+    view.QueueUpdate(40, {L"Because believing"});
+    view.QueueUpdate(40, {L"Because believing that the dots will connect"});
+    view.Present();
+    CheckText(view.FullText(), L"Because believing that the dots will connect\r\n",
+              "post-clear revisions replace the same absolute line");
+
+    // Restore the standard fixture for the interaction checks below.
+    view.Clear();
+    view.QueueUpdate(0, lines);
+    view.Present();
+
     // Geometry: the line-select gutter is 75 device pixels at 96 dpi, and this
     // process is dpi-unaware, so a point just past it lands on the first glyph.
     constexpr int kGutterX = 10;
