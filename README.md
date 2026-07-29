@@ -113,6 +113,8 @@ The default global Send shortcut is **Shift+Z**. Use **Settings → Change…** 
 focus the hotkey field, then press a new combination. If another application
 already owns that shortcut, this app reports that it is unavailable instead of
 silently substituting a different one.
+The shortcut waits for its keys to be released and then runs the same Send
+action as the button, including the current Press Enter checkbox state.
 
 ## Settings
 

@@ -43,6 +43,9 @@ private:
     void DragSplitterTo(int splitterTop);
     void Layout();
     void UpdateHotkeyRegistration();
+    void QueueHotkeySend();
+    bool HotkeyChordReleased() const;
+    void UpdateWindowTitle();
     void SetStatus(const std::wstring& text);
     void ApplyTypography();
     void ApplyViewMode();
@@ -76,6 +79,7 @@ private:
     UINT      m_dpi = 96;
     HFONT     m_controlFont = nullptr;
     bool      m_hotkeyRegistered = false;
+    bool      m_hotkeySendPending = false;
     bool      m_darkTheme = true;
 
     HWND m_sendButton = nullptr;

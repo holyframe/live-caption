@@ -61,6 +61,8 @@ constexpr COLORREF kLightSplitterLine  = RGB(205, 205, 205);
 // Throttle for "copy real-time"; the caption updates ~10x per second and we do
 // not want to thrash the clipboard that hard.
 constexpr ULONGLONG kRealtimeCopyIntervalMs = 600;
+constexpr UINT_PTR kHotkeySendTimerId = 0xCA51;
+constexpr UINT kHotkeySendPollMs = 10;
 
 int CALLBACK EnumFontProc(const LOGFONTW* logFont, const TEXTMETRICW*, DWORD, LPARAM param) {
     auto* names = reinterpret_cast<std::set<std::wstring>*>(param);
@@ -89,6 +91,54 @@ bool SystemUsesDarkTheme() {
 
 bool EffectiveDarkTheme(UiTheme theme) {
     return theme == UiTheme::Dark || (theme == UiTheme::System && SystemUsesDarkTheme());
+}
+
+std::wstring HotkeyName(unsigned modifiers, unsigned key) {
+    std::wstring name;
+    auto append = [&name](const wchar_t* part) {
+        if (!name.empty()) name += L"+";
+        name += part;
+    };
+
+    if (modifiers & MOD_CONTROL) append(L"Ctrl");
+    if (modifiers & MOD_ALT) append(L"Alt");
+    if (modifiers & MOD_SHIFT) append(L"Shift");
+    if (modifiers & MOD_WIN) append(L"Win");
+
+    if (key >= 'A' && key <= 'Z') {
+        const wchar_t keyName[] = {static_cast<wchar_t>(key), L'\0'};
+        append(keyName);
+    } else if (key >= '0' && key <= '9') {
+        const wchar_t keyName[] = {static_cast<wchar_t>(key), L'\0'};
+        append(keyName);
+    } else if (key != 0) {
+        wchar_t keyName[64]{};
+        UINT scanCode = ::MapVirtualKeyW(key, MAPVK_VK_TO_VSC);
+        switch (key) {
+            case VK_INSERT:
+            case VK_DELETE:
+            case VK_HOME:
+            case VK_END:
+            case VK_PRIOR:
+            case VK_NEXT:
+            case VK_LEFT:
+            case VK_RIGHT:
+            case VK_UP:
+            case VK_DOWN:
+            case VK_DIVIDE:
+            case VK_NUMLOCK:
+                scanCode |= 0x100;
+                break;
+        }
+        if (::GetKeyNameTextW(static_cast<LONG>(scanCode << 16), keyName,
+                              static_cast<int>(std::size(keyName))) > 0) {
+            append(keyName);
+        } else {
+            append(L"Unknown");
+        }
+    }
+
+    return name.empty() ? L"None" : name;
 }
 
 CaptionSourceChoice ToSourceChoice(CaptionSourcePreference source) {
@@ -504,7 +554,18 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
 
         case WM_HOTKEY:
             if (wParam == HOTKEY_SEND) {
-                OnSend();
+                QueueHotkeySend();
+                return 0;
+            }
+            break;
+
+        case WM_TIMER:
+            if (wParam == kHotkeySendTimerId && m_hotkeySendPending) {
+                if (HotkeyChordReleased()) {
+                    ::KillTimer(m_hwnd, kHotkeySendTimerId);
+                    m_hotkeySendPending = false;
+                    OnSend();
+                }
                 return 0;
             }
             break;
@@ -560,6 +621,10 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         }
 
         case WM_DESTROY:
+            if (m_hotkeySendPending) {
+                ::KillTimer(m_hwnd, kHotkeySendTimerId);
+                m_hotkeySendPending = false;
+            }
             if (m_pickOutlineWindow) {
                 ::DestroyWindow(m_pickOutlineWindow);
                 m_pickOutlineWindow = nullptr;
@@ -1061,6 +1126,10 @@ void MainWindow::Layout() {
 }
 
 void MainWindow::UpdateHotkeyRegistration() {
+    if (m_hotkeySendPending) {
+        ::KillTimer(m_hwnd, kHotkeySendTimerId);
+        m_hotkeySendPending = false;
+    }
     if (m_hotkeyRegistered) {
         ::UnregisterHotKey(m_hwnd, HOTKEY_SEND);
         m_hotkeyRegistered = false;
@@ -1072,8 +1141,51 @@ void MainWindow::UpdateHotkeyRegistration() {
             ::RegisterHotKey(m_hwnd, HOTKEY_SEND, m_settings.hotkeyModifiers | MOD_NOREPEAT, key) !=
             FALSE;
     }
-    ::SetWindowTextW(m_hwnd, kBaseTitle);
+    UpdateWindowTitle();
     if (!m_hotkeyRegistered) SetStatus(L"The Send hotkey is already in use by another app.");
+}
+
+void MainWindow::QueueHotkeySend() {
+    if (m_hotkeySendPending) return;
+    if (HotkeyChordReleased()) {
+        OnSend();
+        return;
+    }
+
+    m_hotkeySendPending = true;
+    if (::SetTimer(m_hwnd, kHotkeySendTimerId, kHotkeySendPollMs, nullptr) == 0) {
+        m_hotkeySendPending = false;
+        SetStatus(L"Could not schedule the Send hotkey action.");
+    }
+}
+
+bool MainWindow::HotkeyChordReleased() const {
+    const auto released = [](int virtualKey) {
+        return (::GetAsyncKeyState(virtualKey) & 0x8000) == 0;
+    };
+
+    if (m_settings.hotkeyVirtualKey != 0 &&
+        !released(static_cast<int>(m_settings.hotkeyVirtualKey))) {
+        return false;
+    }
+    const unsigned modifiers = m_settings.hotkeyModifiers;
+    if ((modifiers & MOD_SHIFT) != 0 && !released(VK_SHIFT)) return false;
+    if ((modifiers & MOD_CONTROL) != 0 && !released(VK_CONTROL)) return false;
+    if ((modifiers & MOD_ALT) != 0 && !released(VK_MENU)) return false;
+    if ((modifiers & MOD_WIN) != 0 && (!released(VK_LWIN) || !released(VK_RWIN))) return false;
+    return true;
+}
+
+void MainWindow::UpdateWindowTitle() {
+    std::wstring title = kBaseTitle;
+    title += L" (Hotkey - ";
+    title += HotkeyName(m_settings.hotkeyModifiers, m_settings.hotkeyVirtualKey);
+    title += L") : ";
+    title += m_webInputPicker.SelectedWindow()
+                 ? (m_webInputPicker.SelectedName().empty() ? L"Untitled target"
+                                                            : m_webInputPicker.SelectedName())
+                 : L"No target selected";
+    ::SetWindowTextW(m_hwnd, title.c_str());
 }
 
 void MainWindow::SetStatus(const std::wstring& text) {
@@ -1189,15 +1301,20 @@ void MainWindow::OnSend() {
         return;
     }
 
+    const bool pressEnter =
+        m_pressEnterCheck &&
+        ::SendMessageW(m_pressEnterCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    m_settings.pressEnter = pressEnter;
+
     std::wstring error;
-    if (!m_webInputPicker.SendText(m_view.SelectedText(), m_settings.pressEnter, error)) {
+    if (!m_webInputPicker.SendText(m_view.SelectedText(), pressEnter, error)) {
         SetStatus(error);
         return;
     }
 
-    std::wstring status = m_settings.pressEnter ? L"Sent selection to " : L"Inserted selection in ";
+    std::wstring status = pressEnter ? L"Sent selection to " : L"Inserted selection in ";
     status += m_webInputPicker.SelectedName();
-    status += m_settings.pressEnter ? L" and pressed Enter." : L".";
+    status += pressEnter ? L" and pressed Enter." : L".";
     SetStatus(status);
 }
 
@@ -1264,6 +1381,7 @@ void MainWindow::FinishWindowPick(bool accept) {
     if (accept && m_windowPickState == WebInputPickState::Valid &&
         m_webInputPicker.CommitCandidate()) {
         UpdatePickedWindowIcon(m_webInputPicker.SelectedWindow());
+        UpdateWindowTitle();
 
         std::wstring accessibleName = L"Selected window: ";
         accessibleName += m_webInputPicker.SelectedName();
@@ -1358,6 +1476,7 @@ void MainWindow::FinishSelectedIconRemoval(bool accept) {
 
 void MainWindow::ClearPickedWindow() {
     m_webInputPicker.ClearSelected();
+    UpdateWindowTitle();
     if (m_pickedWindowIcon) {
         ::DestroyIcon(m_pickedWindowIcon);
         m_pickedWindowIcon = nullptr;
