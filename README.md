@@ -55,7 +55,7 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 | **Send** | Replaces the picked web tab's chat input with the selected caption text. |
 | **Press Enter** | Also presses Enter in the picked chat input after inserting the selection. Enter in this app triggers Send when checked. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
-| **Save** (right panel) | Saves the displayed captions as `{save time} - {picked tab name}.txt`. |
+| **Save** (right panel) | Opens Save As with `{save time} - {picked tab name}.txt` prefilled. |
 | **Clear** (right panel) | Clears the currently displayed captions. |
 | **Settings** (right panel) | Opens caption-source, theme, and Send-hotkey preferences. |
 | **Pick window** (right panel) | Drag onto a browser/WebView window to select its active tab. The selected window's icon appears beneath the unchanged picker button. |

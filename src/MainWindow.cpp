@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include <commctrl.h>
+#include <commdlg.h>
 #include <dwmapi.h>
 #include <uxtheme.h>
 #include <windowsx.h>
@@ -1364,13 +1365,29 @@ void MainWindow::OnSave() {
 
     SYSTEMTIME saveTime{};
     ::GetLocalTime(&saveTime);
-    const std::filesystem::path path =
-        folder / caption_save::BuildFileName(saveTime, m_webInputPicker.SelectedName());
+    const std::wstring defaultFileName =
+        caption_save::BuildFileName(saveTime, m_webInputPicker.SelectedName());
+
+    wchar_t path[32768]{};
+    ::wcsncpy_s(path, defaultFileName.c_str(), _TRUNCATE);
+
+    const std::wstring initialFolder = folder.wstring();
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = m_hwnd;
+    dialog.lpstrFilter = L"Text files (*.txt)\0*.txt\0All files (*.*)\0*.*\0\0";
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = static_cast<DWORD>(std::size(path));
+    dialog.lpstrInitialDir = initialFolder.c_str();
+    dialog.lpstrDefExt = L"txt";
+    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!::GetSaveFileNameW(&dialog)) return;
+
     const HANDLE file =
-        ::CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW,
+        ::CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
                       FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
-        SetStatus(L"Could not create the caption file in the configured save folder.");
+        SetStatus(L"Could not create the caption file in the selected location.");
         return;
     }
 
@@ -1386,8 +1403,17 @@ void MainWindow::OnSave() {
     }
     ::CloseHandle(file);
 
-    SetStatus(saved ? std::wstring(L"Saved captions to ") + path.wstring()
-                    : L"Could not finish writing the caption file.");
+    if (!saved) {
+        SetStatus(L"Could not finish writing the caption file.");
+        return;
+    }
+
+    // A successful save completes this caption batch. Match the Clear button's
+    // behavior, but only after the file has been fully written so cancellation
+    // or an I/O error can never discard unsaved text.
+    DrainPendingPayloads();
+    m_view.Clear();
+    SetStatus(std::wstring(L"Saved captions to ") + path + L" and cleared the caption pane.");
 }
 
 void MainWindow::OnClear() {

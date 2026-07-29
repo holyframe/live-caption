@@ -48,6 +48,7 @@ target_link_libraries(LiveCaptionView PRIVATE
     uxtheme
     advapi32
     shell32
+    comdlg32
 )
 
 if(MSVC)
