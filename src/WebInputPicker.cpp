@@ -667,6 +667,10 @@ const std::wstring& WebInputPicker::SelectedName() const {
     return m_impl->selected.name;
 }
 
+void WebInputPicker::ClearSelected() {
+    m_impl->selected.Reset();
+}
+
 bool WebInputPicker::SendText(const std::wstring& text, bool pressEnter, std::wstring& error) {
     return m_impl->SendText(text, pressEnter, error);
 }

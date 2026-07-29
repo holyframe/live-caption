@@ -56,7 +56,7 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 | **Press Enter** | Also presses Enter in the picked chat input after inserting the selection. Enter in this app triggers Send when checked. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
 | **Settings** (right panel) | Gear button at the foot of the right strip. Placeholder for now. |
-| **Pick window** (right panel) | Drag onto a browser/WebView window to select its active tab. The button changes to the selected window's icon. |
+| **Pick window** (right panel) | Drag onto a browser/WebView window to select its active tab. The selected window's icon appears beneath the unchanged picker button. |
 | Double-click empty pane space | Same as Send. |
 | **Ctrl+Shift+Z** | Global hotkey that shows/hides the window. |
 
@@ -71,7 +71,7 @@ selection is implemented directly on it:
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
 | Left gutter (75px) | Click or drag to select whole lines, including their line breaks. Arrow cursor; the row under the pointer lights up. |
-| Right panel (45px) | Full-height strip to the right of the scrollbar, with Pick window at the top and Settings at the bottom. |
+| Right panel (45px) | Full-height strip to the right of the scrollbar, with Pick window and the selected target icon at the top and Settings at the bottom. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
 
@@ -92,13 +92,16 @@ WebView window. A crosshair means the active web tab contains an enabled,
 focusable editable field and can be selected; the no-drop cursor means it
 cannot. A valid target is also surrounded by a click-through red outline.
 Releasing on it remembers that exact UI Automation document and input element,
-and replaces the picker glyph with the target window's icon.
+and displays the target window's icon in a separate tile beneath the picker.
 Click Send after selecting text in the caption pane. The app reactivates the
 retained browser tab, focuses its chat input, and replaces the input contents
 with the selection. When Press Enter is checked it then submits with Enter;
 otherwise the populated input is left for review.
 If a page contains several editable fields, release directly over the desired
 chat composer to select it instead of the automatically preferred field.
+To forget a picked target, right-drag its separate icon tile outside the app
+window and release. Releasing inside cancels; releasing outside removes the
+retained window, tab, input element, accessible label, and icon.
 
 Only web inputs exposed beneath a UI Automation `Document` are accepted.
 Ordinary desktop edit controls, browser address bars, disabled or read-only

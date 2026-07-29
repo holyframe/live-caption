@@ -219,6 +219,76 @@ LRESULT CALLBACK MainWindow::PickButtonSubclassProc(HWND hwnd, UINT message, WPA
     return ::DefSubclassProc(hwnd, message, wParam, lParam);
 }
 
+LRESULT CALLBACK MainWindow::SelectedIconSubclassProc(HWND hwnd, UINT message, WPARAM wParam,
+                                                      LPARAM lParam, UINT_PTR subclassId,
+                                                      DWORD_PTR referenceData) {
+    auto* self = reinterpret_cast<MainWindow*>(referenceData);
+    if (!self) return ::DefSubclassProc(hwnd, message, wParam, lParam);
+
+    switch (message) {
+        case WM_RBUTTONDOWN:
+            if (self->m_webInputPicker.SelectedWindow()) {
+                ::SetFocus(hwnd);
+                self->BeginSelectedIconRemoval();
+                return 0;
+            }
+            break;
+
+        case WM_MOUSEMOVE:
+            if (self->m_selectedIconRemoveDrag) {
+                POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ::ClientToScreen(hwnd, &point);
+                self->UpdateSelectedIconRemoval(point);
+                return 0;
+            }
+            break;
+
+        case WM_RBUTTONUP:
+            if (self->m_selectedIconRemoveDrag) {
+                POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ::ClientToScreen(hwnd, &point);
+                self->UpdateSelectedIconRemoval(point);
+                self->FinishSelectedIconRemoval(true);
+                return 0;
+            }
+            break;
+
+        case WM_SETCURSOR:
+            if (self->m_selectedIconRemoveDrag) {
+                const LPCWSTR cursor = self->m_selectedIconOutside ? IDC_HAND : IDC_SIZEALL;
+                ::SetCursor(::LoadCursorW(nullptr, cursor));
+                return TRUE;
+            }
+            break;
+
+        case WM_KEYDOWN:
+            if (self->m_selectedIconRemoveDrag && wParam == VK_ESCAPE) {
+                self->FinishSelectedIconRemoval(false);
+                return 0;
+            }
+            break;
+
+        case WM_CANCELMODE:
+        case WM_CAPTURECHANGED:
+            if (self->m_selectedIconRemoveDrag) {
+                self->FinishSelectedIconRemoval(false);
+                return 0;
+            }
+            break;
+
+        case WM_CONTEXTMENU:
+            return 0;
+
+        case WM_NCDESTROY:
+            ::RemoveWindowSubclass(hwnd, &MainWindow::SelectedIconSubclassProc, subclassId);
+            break;
+
+        default:
+            break;
+    }
+    return ::DefSubclassProc(hwnd, message, wParam, lParam);
+}
+
 LRESULT CALLBACK MainWindow::PickOutlineWndProc(HWND hwnd, UINT message, WPARAM wParam,
                                                 LPARAM lParam) {
     switch (message) {
@@ -363,6 +433,11 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
             if (item && item->CtlType == ODT_BUTTON) {
                 DrawDarkButton(*item);
+                return TRUE;
+            }
+            if (item && item->CtlType == ODT_STATIC &&
+                item->hwndItem == m_selectedWindowIconView) {
+                DrawSelectedWindowIcon(*item);
                 return TRUE;
             }
             break;
@@ -521,6 +596,17 @@ bool MainWindow::CreateChildren() {
     // Caption text doubles as the accessible name; DrawDarkButton paints icons.
     m_settingsButton    = button(L"Settings", IDC_BTN_SETTINGS);
     m_pickWindowButton  = button(L"Pick up window", IDC_BTN_PICK_WINDOW);
+    m_selectedWindowIconView =
+        ::CreateWindowExW(0, WC_STATICW, L"",
+                          WS_CHILD | WS_CLIPSIBLINGS | SS_OWNERDRAW | SS_NOTIFY, 0, 0, 10, 10,
+                          m_hwnd,
+                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SELECTED_WINDOW)),
+                          m_instance, nullptr);
+    if (m_selectedWindowIconView &&
+        !::SetWindowSubclass(m_selectedWindowIconView, &MainWindow::SelectedIconSubclassProc,
+                             IDC_SELECTED_WINDOW, reinterpret_cast<DWORD_PTR>(this))) {
+        return false;
+    }
     if (m_pickWindowButton &&
         !::SetWindowSubclass(m_pickWindowButton, &MainWindow::PickButtonSubclassProc,
                              IDC_BTN_PICK_WINDOW, reinterpret_cast<DWORD_PTR>(this))) {
@@ -550,8 +636,8 @@ bool MainWindow::CreateChildren() {
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUSBAR)),
                                     m_instance, nullptr);
 
-    if (!m_sendButton || !m_settingsButton || !m_pickWindowButton || !m_fontCombo ||
-        !m_statusBar) {
+    if (!m_sendButton || !m_settingsButton || !m_pickWindowButton ||
+        !m_selectedWindowIconView || !m_fontCombo || !m_statusBar) {
         return false;
     }
 
@@ -598,8 +684,9 @@ void MainWindow::DiscardThemeBrushes() {
 void MainWindow::ApplyDarkTheme() {
     EnsureThemeBrushes();
 
-    const HWND explorer[] = {m_pressEnterCheck, m_hintLabel, m_rightPanel,
-                             m_bottomPanel,     m_statusBar, m_view.Handle()};
+    const HWND explorer[] = {m_pressEnterCheck,       m_hintLabel, m_rightPanel,
+                             m_bottomPanel,           m_statusBar, m_view.Handle(),
+                             m_selectedWindowIconView};
     for (HWND control : explorer) TryDarkControlTheme(control, L"DarkMode_Explorer");
 
     const HWND combos[] = {m_fontCombo, m_sizeCombo, m_spacingCombo};
@@ -655,16 +742,11 @@ void MainWindow::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
     const wchar_t* iconGlyph = nullptr;
     if (item.hwndItem == m_settingsButton) {
         iconGlyph = L"\uE713";  // Settings (gear)
-    } else if (item.hwndItem == m_pickWindowButton && !m_pickedWindowIcon) {
+    } else if (item.hwndItem == m_pickWindowButton) {
         iconGlyph = L"\uE78B";  // Window with up-arrow (pick up / raise window)
     }
 
-    if (item.hwndItem == m_pickWindowButton && m_pickedWindowIcon) {
-        const int iconSize = std::max(Scaled(20), 16);
-        const int x = contentRc.left + ((contentRc.right - contentRc.left) - iconSize) / 2;
-        const int y = contentRc.top + ((contentRc.bottom - contentRc.top) - iconSize) / 2;
-        ::DrawIconEx(item.hDC, x, y, m_pickedWindowIcon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
-    } else if (iconGlyph) {
+    if (iconGlyph) {
         const int iconPx = std::max(Scaled(16), 12);
         HFONT iconFont = ::CreateFontW(-iconPx, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
@@ -687,6 +769,28 @@ void MainWindow::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
         ::InflateRect(&focusRc, -3, -3);
         ::DrawFocusRect(item.hDC, &focusRc);
     }
+}
+
+void MainWindow::DrawSelectedWindowIcon(const DRAWITEMSTRUCT& item) const {
+    ::FillRect(item.hDC, &item.rcItem,
+               m_buttonBrush ? m_buttonBrush
+                             : reinterpret_cast<HBRUSH>(::GetStockObject(DKGRAY_BRUSH)));
+
+    const COLORREF borderColor =
+        m_selectedIconRemoveDrag && m_selectedIconOutside ? kPickOutline : kButtonBorder;
+    const HPEN border = ::CreatePen(PS_SOLID, 1, borderColor);
+    const HGDIOBJ oldPen = ::SelectObject(item.hDC, border);
+    const HGDIOBJ oldBrush = ::SelectObject(item.hDC, ::GetStockObject(NULL_BRUSH));
+    ::Rectangle(item.hDC, item.rcItem.left, item.rcItem.top, item.rcItem.right, item.rcItem.bottom);
+    ::SelectObject(item.hDC, oldBrush);
+    ::SelectObject(item.hDC, oldPen);
+    ::DeleteObject(border);
+
+    if (!m_pickedWindowIcon) return;
+    const int iconSize = std::max(Scaled(20), 16);
+    const int x = item.rcItem.left + ((item.rcItem.right - item.rcItem.left) - iconSize) / 2;
+    const int y = item.rcItem.top + ((item.rcItem.bottom - item.rcItem.top) - iconSize) / 2;
+    ::DrawIconEx(item.hDC, x, y, m_pickedWindowIcon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
 }
 
 void MainWindow::ApplyControlFont() {
@@ -845,12 +949,16 @@ void MainWindow::Layout() {
                        SWP_NOACTIVATE);
     }
 
-    // Right-panel icon buttons: window picker at the top, settings gear at the foot.
+    // Right panel: picker at the top, selected target beneath it, settings at the foot.
     const int buttonSize = Scaled(kRightButtonSize);
     const int buttonLeft = columnWidth + std::max((rightPanelWidth - buttonSize) / 2, 0);
     if (m_pickWindowButton) {
         ::SetWindowPos(m_pickWindowButton, nullptr, buttonLeft, pad, buttonSize, buttonSize,
                        SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    if (m_selectedWindowIconView) {
+        ::SetWindowPos(m_selectedWindowIconView, nullptr, buttonLeft, pad + buttonSize + gap,
+                       buttonSize, buttonSize, SWP_NOZORDER | SWP_NOACTIVATE);
     }
     if (m_settingsButton) {
         const int buttonTop = std::max(clientHeight - pad - buttonSize, 0);
@@ -994,6 +1102,10 @@ void MainWindow::OnCommand(int controlId, int notifyCode) {
         case IDCANCEL:
             // IsDialogMessage turns Escape into this before the caption pane can
             // see the key, so the pane's own handler never runs.
+            if (m_selectedIconRemoveDrag) {
+                FinishSelectedIconRemoval(false);
+                return;
+            }
             if (m_windowPickDrag) {
                 FinishWindowPick(false);
                 return;
@@ -1115,11 +1227,11 @@ void MainWindow::FinishWindowPick(bool accept) {
         m_webInputPicker.CommitCandidate()) {
         UpdatePickedWindowIcon(m_webInputPicker.SelectedWindow());
 
-        std::wstring accessibleName = L"Selected tab: ";
+        std::wstring accessibleName = L"Selected window: ";
         accessibleName += m_webInputPicker.SelectedName();
-        accessibleName += L". Drag to choose another window.";
-        ::SetWindowTextW(m_pickWindowButton, accessibleName.c_str());
-        ::InvalidateRect(m_pickWindowButton, nullptr, TRUE);
+        ::SetWindowTextW(m_selectedWindowIconView, accessibleName.c_str());
+        ::ShowWindow(m_selectedWindowIconView, SW_SHOWNOACTIVATE);
+        ::InvalidateRect(m_selectedWindowIconView, nullptr, TRUE);
 
         std::wstring status = L"Picked web tab: ";
         status += m_webInputPicker.SelectedName();
@@ -1163,6 +1275,59 @@ void MainWindow::UpdatePickedWindowIcon(HWND window) {
     if (!icon) return;
     if (m_pickedWindowIcon) ::DestroyIcon(m_pickedWindowIcon);
     m_pickedWindowIcon = icon;
+}
+
+void MainWindow::BeginSelectedIconRemoval() {
+    if (m_selectedIconRemoveDrag || !m_webInputPicker.SelectedWindow()) return;
+    m_selectedIconRemoveDrag = true;
+    m_selectedIconOutside = false;
+    ::SetCapture(m_selectedWindowIconView);
+
+    POINT point{};
+    if (::GetCursorPos(&point)) UpdateSelectedIconRemoval(point);
+    SetStatus(L"Right-drag the selected icon outside this app and release to remove it.");
+}
+
+void MainWindow::UpdateSelectedIconRemoval(POINT screenPoint) {
+    if (!m_selectedIconRemoveDrag) return;
+    RECT appBounds{};
+    const bool outside =
+        !::GetWindowRect(m_hwnd, &appBounds) || !::PtInRect(&appBounds, screenPoint);
+    if (outside != m_selectedIconOutside) {
+        m_selectedIconOutside = outside;
+        ::InvalidateRect(m_selectedWindowIconView, nullptr, TRUE);
+        SetStatus(outside ? L"Release to remove the selected window."
+                          : L"Drag outside this app to remove the selected window.");
+    }
+    ::SetCursor(::LoadCursorW(nullptr, outside ? IDC_HAND : IDC_SIZEALL));
+}
+
+void MainWindow::FinishSelectedIconRemoval(bool accept) {
+    if (!m_selectedIconRemoveDrag) return;
+    const bool remove = accept && m_selectedIconOutside;
+    m_selectedIconRemoveDrag = false;
+    m_selectedIconOutside = false;
+    if (::GetCapture() == m_selectedWindowIconView) ::ReleaseCapture();
+    ::InvalidateRect(m_selectedWindowIconView, nullptr, TRUE);
+
+    if (remove) {
+        ClearPickedWindow();
+        SetStatus(L"Selected window removed.");
+    } else {
+        SetStatus(L"Selected-window removal cancelled.");
+    }
+}
+
+void MainWindow::ClearPickedWindow() {
+    m_webInputPicker.ClearSelected();
+    if (m_pickedWindowIcon) {
+        ::DestroyIcon(m_pickedWindowIcon);
+        m_pickedWindowIcon = nullptr;
+    }
+    if (m_selectedWindowIconView) {
+        ::SetWindowTextW(m_selectedWindowIconView, L"");
+        ::ShowWindow(m_selectedWindowIconView, SW_HIDE);
+    }
 }
 
 void MainWindow::UpdatePickOutline(HWND window) {

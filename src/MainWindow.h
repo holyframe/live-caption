@@ -21,6 +21,8 @@ private:
     static LRESULT CALLBACK WndProcThunk(HWND, UINT, WPARAM, LPARAM);
     static LRESULT CALLBACK PickButtonSubclassProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR,
                                                    DWORD_PTR);
+    static LRESULT CALLBACK SelectedIconSubclassProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR,
+                                                     DWORD_PTR);
     static LRESULT CALLBACK PickOutlineWndProc(HWND, UINT, WPARAM, LPARAM);
     LRESULT WndProc(UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -33,6 +35,7 @@ private:
     void EnsureThemeBrushes();
     void DiscardThemeBrushes();
     void DrawDarkButton(const DRAWITEMSTRUCT& item) const;
+    void DrawSelectedWindowIcon(const DRAWITEMSTRUCT& item) const;
     LRESULT OnCtlColor(HDC dc, HWND control);
     void DrawSplitter(HDC dc) const;
     int  LogBarHeight() const;
@@ -54,6 +57,10 @@ private:
     void FinishWindowPick(bool accept);
     void ShowWindowPickStatus(WebInputPickState state);
     void UpdatePickedWindowIcon(HWND window);
+    void BeginSelectedIconRemoval();
+    void UpdateSelectedIconRemoval(POINT screenPoint);
+    void FinishSelectedIconRemoval(bool accept);
+    void ClearPickedWindow();
     void UpdatePickOutline(HWND window);
     void HidePickOutline();
     void OnCopy();
@@ -81,6 +88,7 @@ private:
     HWND m_bottomPanel = nullptr;
     HWND m_settingsButton = nullptr;
     HWND m_pickWindowButton = nullptr;
+    HWND m_selectedWindowIconView = nullptr;
     HWND m_statusBar = nullptr;
     HWND m_pickOutlineWindow = nullptr;
     HICON m_pickedWindowIcon = nullptr;
@@ -88,6 +96,8 @@ private:
     WebInputPicker m_webInputPicker;
     bool m_windowPickDrag = false;
     WebInputPickState m_windowPickState = WebInputPickState::NoWindow;
+    bool m_selectedIconRemoveDrag = false;
+    bool m_selectedIconOutside = false;
 
     HBRUSH m_windowBrush = nullptr;
     HBRUSH m_panelBrush = nullptr;

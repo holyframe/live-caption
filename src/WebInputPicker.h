@@ -34,6 +34,7 @@ public:
 
     HWND SelectedWindow() const;
     const std::wstring& SelectedName() const;
+    void ClearSelected();
 
     // Re-activates the retained browser tab, focuses its editable field, and
     // replaces the field contents. When pressEnter is true a real Enter key is

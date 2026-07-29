@@ -18,6 +18,7 @@
 #define IDC_BOTTOM_PANEL      1015
 #define IDC_BTN_SETTINGS      1016
 #define IDC_BTN_PICK_WINDOW   1017
+#define IDC_SELECTED_WINDOW   1018
 
 // ---- Global hotkey --------------------------------------------------------
 #define HOTKEY_TOGGLE_VIEW    0xB001
