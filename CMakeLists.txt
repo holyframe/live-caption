@@ -18,6 +18,7 @@ add_executable(LiveCaptionView WIN32
     src/CaptionSource.cpp
     src/CaptureEngine.cpp
     src/CaptionView.cpp
+    src/WebInputPicker.cpp
     src/MainWindow.cpp
     resources/app.rc
 )

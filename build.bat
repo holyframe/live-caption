@@ -50,6 +50,7 @@ cl %CFLAGS% /c ^
     src\CaptionSource.cpp ^
     src\CaptureEngine.cpp ^
     src\CaptionView.cpp ^
+    src\WebInputPicker.cpp ^
     src\MainWindow.cpp ^
     /Fo"%OBJDIR%\\"
 if errorlevel 1 exit /b 1

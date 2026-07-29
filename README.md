@@ -52,11 +52,11 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 
 | Control | Behaviour |
 | --- | --- |
-| **Send** | Placeholder — deliberately does nothing yet. |
-| **Press Enter** | When checked, Enter triggers Send. |
+| **Send** | Replaces the picked web tab's chat input with the selected caption text. |
+| **Press Enter** | Also presses Enter in the picked chat input after inserting the selection. Enter in this app triggers Send when checked. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
 | **Settings** (right panel) | Gear button at the foot of the right strip. Placeholder for now. |
-| **Pick window** (right panel) | Window pick-up button at the top of the right strip. Placeholder for now. |
+| **Pick window** (right panel) | Drag onto a browser/WebView window to select its active tab. The button changes to the selected window's icon. |
 | Double-click empty pane space | Same as Send. |
 | **Ctrl+Shift+Z** | Global hotkey that shows/hides the window. |
 
@@ -84,6 +84,25 @@ selection that stops short of the end is left alone.
 
 `tests\selection_test.bat` covers those cases and leaves a screenshot of the
 highlighted pane in `build\`.
+
+### Picking a web input tab
+
+Drag the Pick window button from the top of the right panel onto a browser or
+WebView window. A crosshair means the active web tab contains an enabled,
+focusable editable field and can be selected; the no-drop cursor means it
+cannot. A valid target is also surrounded by a click-through red outline.
+Releasing on it remembers that exact UI Automation document and input element,
+and replaces the picker glyph with the target window's icon.
+Click Send after selecting text in the caption pane. The app reactivates the
+retained browser tab, focuses its chat input, and replaces the input contents
+with the selection. When Press Enter is checked it then submits with Enter;
+otherwise the populated input is left for review.
+If a page contains several editable fields, release directly over the desired
+chat composer to select it instead of the automatically preferred field.
+
+Only web inputs exposed beneath a UI Automation `Document` are accepted.
+Ordinary desktop edit controls, browser address bars, disabled or read-only
+fields, password fields, and tabs with no visible editable input are rejected.
 
 ### About the hotkey
 

@@ -8,6 +8,7 @@
 #include "CaptionView.h"
 #include "CaptureEngine.h"
 #include "Settings.h"
+#include "WebInputPicker.h"
 
 class MainWindow {
 public:
@@ -18,6 +19,9 @@ public:
 
 private:
     static LRESULT CALLBACK WndProcThunk(HWND, UINT, WPARAM, LPARAM);
+    static LRESULT CALLBACK PickButtonSubclassProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR,
+                                                   DWORD_PTR);
+    static LRESULT CALLBACK PickOutlineWndProc(HWND, UINT, WPARAM, LPARAM);
     LRESULT WndProc(UINT message, WPARAM wParam, LPARAM lParam);
 
     bool CreateChildren();
@@ -45,6 +49,13 @@ private:
     void OnSend();
     void OnSettings();
     void OnPickWindow();
+    void BeginWindowPick();
+    void UpdateWindowPick(POINT screenPoint);
+    void FinishWindowPick(bool accept);
+    void ShowWindowPickStatus(WebInputPickState state);
+    void UpdatePickedWindowIcon(HWND window);
+    void UpdatePickOutline(HWND window);
+    void HidePickOutline();
     void OnCopy();
     void OnCaptionUpdate(CaptionUpdate* update);
     void MaybeCopyRealtime();
@@ -71,6 +82,12 @@ private:
     HWND m_settingsButton = nullptr;
     HWND m_pickWindowButton = nullptr;
     HWND m_statusBar = nullptr;
+    HWND m_pickOutlineWindow = nullptr;
+    HICON m_pickedWindowIcon = nullptr;
+
+    WebInputPicker m_webInputPicker;
+    bool m_windowPickDrag = false;
+    WebInputPickState m_windowPickState = WebInputPickState::NoWindow;
 
     HBRUSH m_windowBrush = nullptr;
     HBRUSH m_panelBrush = nullptr;
