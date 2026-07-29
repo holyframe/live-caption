@@ -4,6 +4,9 @@
 // Embed the application manifest (common controls v6 + per-monitor DPI).
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "app.manifest"
 
+// Vela Live Caption application icon (multi-resolution Windows ICO).
+IDI_APPICON ICON "app-icon.ico"
+
 IDD_SETTINGS DIALOGEX 0, 0, 360, 194
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Settings"
@@ -45,6 +48,8 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "Live Caption App"
             VALUE "FileVersion",     "1.0.0.0"
+            VALUE "CompanyName",     "Vela Innovation Technology LLC"
+            VALUE "LegalCopyright",  "Copyright (C) Vela Innovation Technology LLC"
             VALUE "InternalName",    "LiveCaptionView"
             VALUE "OriginalFilename","LiveCaptionView.exe"
             VALUE "ProductName",     "Live Caption App"

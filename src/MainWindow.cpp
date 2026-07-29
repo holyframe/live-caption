@@ -183,7 +183,9 @@ bool MainWindow::RegisterWindowClass(HINSTANCE instance) {
     wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = nullptr;  // painted dark in WM_ERASEBKGND
     wc.lpszClassName = kClassName;
-    wc.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);
+    wc.hIcon = ::LoadIconW(instance, MAKEINTRESOURCEW(IDI_APPICON));
+    wc.hIconSm = static_cast<HICON>(
+        ::LoadImageW(instance, MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
     if (::RegisterClassExW(&wc) == 0) return false;
 
     WNDCLASSEXW outline{};
@@ -515,6 +517,10 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
 
         case WM_DRAWITEM: {
             const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+            if (item && item->hwndItem == m_statusBar) {
+                DrawStatusPanel(*item);
+                return TRUE;
+            }
             if (item && item->CtlType == ODT_BUTTON) {
                 DrawDarkButton(*item);
                 return TRUE;
@@ -523,20 +529,6 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                 item->hwndItem == m_selectedWindowIconView) {
                 DrawSelectedWindowIcon(*item);
                 return TRUE;
-            }
-            break;
-        }
-
-        case WM_NOTIFY: {
-            const auto* hdr = reinterpret_cast<const NMHDR*>(lParam);
-            if (hdr && hdr->hwndFrom == m_statusBar && hdr->code == NM_CUSTOMDRAW) {
-                const auto* draw = reinterpret_cast<const NMCUSTOMDRAW*>(lParam);
-                if (draw->dwDrawStage == CDDS_PREPAINT) {
-                    ::SetTextColor(draw->hdc,
-                                   m_darkTheme ? kTextSecondary : kLightTextSecondary);
-                    ::SetBkColor(draw->hdc, m_darkTheme ? kStatusBg : kLightStatusBg);
-                    return CDRF_NEWFONT;
-                }
             }
             break;
         }
@@ -734,14 +726,15 @@ bool MainWindow::CreateChildren() {
     m_sizeCombo    = combo(IDC_CBO_SIZE);
     m_spacingCombo = combo(IDC_CBO_SPACING);
 
-    // The log view only spans the left column, so the status bar must not keep
-    // stretching itself across the parent; CCS_NORESIZE hands placement to
-    // Layout(). No size grip either, since the corner belongs to the right panel.
-    m_statusBar = ::CreateWindowExW(0, STATUSCLASSNAMEW, L"",
-                                    WS_CHILD | WS_VISIBLE | CCS_NOPARENTALIGN | CCS_NORESIZE, 0, 0,
-                                    10, 10, m_hwnd,
-                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUSBAR)),
-                                    m_instance, nullptr);
+    // Owner drawing avoids the native status bar's light pane edges leaking
+    // through in dark mode. This is a one-line log panel, so a static control
+    // gives us full control of its background, separator, and text.
+    m_statusBar =
+        ::CreateWindowExW(0, WC_STATICW, L"",
+                          WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_OWNERDRAW | SS_NOPREFIX,
+                          0, 0, 10, 10, m_hwnd,
+                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUSBAR)), m_instance,
+                          nullptr);
 
     if (!m_sendButton || !m_saveButton || !m_clearButton || !m_listenButton ||
         !m_settingsButton || !m_pickWindowButton ||
@@ -811,10 +804,6 @@ void MainWindow::ApplyTheme() {
     for (HWND control : combos)
         TryDarkControlTheme(control, m_darkTheme ? L"DarkMode_CFD" : L"CFD");
 
-    if (m_statusBar) {
-        ::SendMessageW(m_statusBar, SB_SETBKCOLOR, 0,
-                       static_cast<LPARAM>(m_darkTheme ? kStatusBg : kLightStatusBg));
-    }
     m_view.SetDarkTheme(m_darkTheme);
     const BOOL darkTitleBar = m_darkTheme ? TRUE : FALSE;
     ::DwmSetWindowAttribute(m_hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &darkTitleBar,
@@ -930,6 +919,33 @@ void MainWindow::DrawSelectedWindowIcon(const DRAWITEMSTRUCT& item) const {
     const int x = item.rcItem.left + ((item.rcItem.right - item.rcItem.left) - iconSize) / 2;
     const int y = item.rcItem.top + ((item.rcItem.bottom - item.rcItem.top) - iconSize) / 2;
     ::DrawIconEx(item.hDC, x, y, m_pickedWindowIcon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
+}
+
+void MainWindow::DrawStatusPanel(const DRAWITEMSTRUCT& item) const {
+    const COLORREF background = m_darkTheme ? kStatusBg : kLightStatusBg;
+    const COLORREF textColor = m_darkTheme ? kTextSecondary : kLightTextSecondary;
+    const COLORREF separator = m_darkTheme ? kSplitterLine : kLightSplitterLine;
+
+    ::SetDCBrushColor(item.hDC, background);
+    ::FillRect(item.hDC, &item.rcItem,
+               reinterpret_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
+
+    RECT line = item.rcItem;
+    line.bottom = std::min(line.top + std::max(Scaled(1), 1), line.bottom);
+    ::SetDCBrushColor(item.hDC, separator);
+    ::FillRect(item.hDC, &line, reinterpret_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
+
+    RECT textRect = item.rcItem;
+    textRect.left += Scaled(8);
+    textRect.right -= Scaled(8);
+    textRect.top += std::max(Scaled(1), 1);
+
+    const HGDIOBJ oldFont = m_controlFont ? ::SelectObject(item.hDC, m_controlFont) : nullptr;
+    ::SetBkMode(item.hDC, TRANSPARENT);
+    ::SetTextColor(item.hDC, textColor);
+    ::DrawTextW(item.hDC, m_statusText.c_str(), static_cast<int>(m_statusText.size()), &textRect,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    if (oldFont) ::SelectObject(item.hDC, oldFont);
 }
 
 void MainWindow::ApplyControlFont() {
@@ -1217,7 +1233,11 @@ void MainWindow::UpdateWindowTitle() {
 }
 
 void MainWindow::SetStatus(const std::wstring& text) {
-    if (m_statusBar) ::SendMessageW(m_statusBar, SB_SETTEXTW, 0, reinterpret_cast<LPARAM>(text.c_str()));
+    m_statusText = text;
+    if (m_statusBar) {
+        ::SetWindowTextW(m_statusBar, text.c_str());
+        ::InvalidateRect(m_statusBar, nullptr, TRUE);
+    }
 }
 
 void MainWindow::ApplyTypography() {

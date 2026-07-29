@@ -36,6 +36,7 @@ private:
     void DiscardThemeBrushes();
     void DrawDarkButton(const DRAWITEMSTRUCT& item) const;
     void DrawSelectedWindowIcon(const DRAWITEMSTRUCT& item) const;
+    void DrawStatusPanel(const DRAWITEMSTRUCT& item) const;
     LRESULT OnCtlColor(HDC dc, HWND control);
     void DrawSplitter(HDC dc) const;
     int  LogBarHeight() const;
@@ -103,6 +104,7 @@ private:
     HWND m_statusBar = nullptr;
     HWND m_pickOutlineWindow = nullptr;
     HICON m_pickedWindowIcon = nullptr;
+    std::wstring m_statusText;
 
     WebInputPicker m_webInputPicker;
     bool m_windowPickDrag = false;
