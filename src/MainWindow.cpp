@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include <commctrl.h>
+#include <commdlg.h>
 #include <dwmapi.h>
 #include <uxtheme.h>
 #include <windowsx.h>
@@ -695,6 +696,8 @@ bool MainWindow::CreateChildren() {
     m_sendButton      = button(L"Send", IDC_BTN_SEND);
     m_pressEnterCheck = check(L"Press Enter", IDC_CHK_PRESS_ENTER);
     // Caption text doubles as the accessible name; DrawDarkButton paints icons.
+    m_saveButton        = button(L"Save captions", IDC_BTN_SAVE);
+    m_clearButton       = button(L"Clear captions", IDC_BTN_CLEAR);
     m_settingsButton    = button(L"Settings", IDC_BTN_SETTINGS);
     m_pickWindowButton  = button(L"Pick up window", IDC_BTN_PICK_WINDOW);
     m_selectedWindowIconView =
@@ -737,7 +740,8 @@ bool MainWindow::CreateChildren() {
                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUSBAR)),
                                     m_instance, nullptr);
 
-    if (!m_sendButton || !m_settingsButton || !m_pickWindowButton ||
+    if (!m_sendButton || !m_saveButton || !m_clearButton || !m_settingsButton ||
+        !m_pickWindowButton ||
         !m_selectedWindowIconView || !m_fontCombo || !m_statusBar) {
         return false;
     }
@@ -864,7 +868,11 @@ void MainWindow::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
 
     // Right-panel icon buttons use Segoe MDL2 Assets glyphs.
     const wchar_t* iconGlyph = nullptr;
-    if (item.hwndItem == m_settingsButton) {
+    if (item.hwndItem == m_saveButton) {
+        iconGlyph = L"\uE74E";  // Save (disk)
+    } else if (item.hwndItem == m_clearButton) {
+        iconGlyph = L"\uE74D";  // Delete / clear
+    } else if (item.hwndItem == m_settingsButton) {
         iconGlyph = L"\uE713";  // Settings (gear)
     } else if (item.hwndItem == m_pickWindowButton) {
         iconGlyph = L"\uE78B";  // Window with up-arrow (pick up / raise window)
@@ -1086,9 +1094,19 @@ void MainWindow::Layout() {
         ::SetWindowPos(m_selectedWindowIconView, nullptr, buttonLeft, pad + buttonSize + gap,
                        buttonSize, buttonSize, SWP_NOZORDER | SWP_NOACTIVATE);
     }
+    int rightButtonTop = std::max(clientHeight - pad - buttonSize, 0);
     if (m_settingsButton) {
-        const int buttonTop = std::max(clientHeight - pad - buttonSize, 0);
-        ::SetWindowPos(m_settingsButton, nullptr, buttonLeft, buttonTop, buttonSize, buttonSize,
+        ::SetWindowPos(m_settingsButton, nullptr, buttonLeft, rightButtonTop, buttonSize,
+                       buttonSize, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    rightButtonTop -= buttonSize + gap;
+    if (m_clearButton) {
+        ::SetWindowPos(m_clearButton, nullptr, buttonLeft, rightButtonTop, buttonSize, buttonSize,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    rightButtonTop -= buttonSize + gap;
+    if (m_saveButton) {
+        ::SetWindowPos(m_saveButton, nullptr, buttonLeft, rightButtonTop, buttonSize, buttonSize,
                        SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
@@ -1218,6 +1236,14 @@ void MainWindow::OnCommand(int controlId, int notifyCode) {
             OnSend();
             return;
 
+        case IDC_BTN_SAVE:
+            OnSave();
+            return;
+
+        case IDC_BTN_CLEAR:
+            OnClear();
+            return;
+
         case IDC_BTN_SETTINGS:
             OnSettings();
             return;
@@ -1316,6 +1342,54 @@ void MainWindow::OnSend() {
     status += m_webInputPicker.SelectedName();
     status += pressEnter ? L" and pressed Enter." : L".";
     SetStatus(status);
+}
+
+void MainWindow::OnSave() {
+    const std::wstring text = m_view.FullText();
+    if (text.empty()) {
+        SetStatus(L"There are no captions to save.");
+        return;
+    }
+
+    wchar_t path[32768] = L"captions.txt";
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = m_hwnd;
+    dialog.lpstrFilter = L"Text files (*.txt)\0*.txt\0All files (*.*)\0*.*\0\0";
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = static_cast<DWORD>(std::size(path));
+    dialog.lpstrDefExt = L"txt";
+    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!::GetSaveFileNameW(&dialog)) return;
+
+    const HANDLE file =
+        ::CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
+                      FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        SetStatus(L"Could not create the selected caption file.");
+        return;
+    }
+
+    const std::string utf8 = util::ToUtf8(text);
+    const unsigned char bom[] = {0xEF, 0xBB, 0xBF};
+    DWORD written = 0;
+    bool saved = ::WriteFile(file, bom, sizeof(bom), &written, nullptr) != FALSE &&
+                 written == sizeof(bom);
+    if (saved && !utf8.empty()) {
+        saved = ::WriteFile(file, utf8.data(), static_cast<DWORD>(utf8.size()), &written,
+                            nullptr) != FALSE &&
+                written == utf8.size();
+    }
+    ::CloseHandle(file);
+
+    SetStatus(saved ? std::wstring(L"Saved captions to ") + path
+                    : L"Could not finish writing the caption file.");
+}
+
+void MainWindow::OnClear() {
+    DrainPendingPayloads();
+    m_view.Clear();
+    SetStatus(L"Caption pane cleared.");
 }
 
 void MainWindow::OnSettings() {

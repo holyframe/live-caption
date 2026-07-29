@@ -52,6 +52,8 @@ private:
 
     void OnCommand(int controlId, int notifyCode);
     void OnSend();
+    void OnSave();
+    void OnClear();
     void OnSettings();
     void OnPickWindow();
     void BeginWindowPick();
@@ -90,6 +92,8 @@ private:
     HWND m_spacingCombo = nullptr;
     HWND m_rightPanel = nullptr;
     HWND m_bottomPanel = nullptr;
+    HWND m_saveButton = nullptr;
+    HWND m_clearButton = nullptr;
     HWND m_settingsButton = nullptr;
     HWND m_pickWindowButton = nullptr;
     HWND m_selectedWindowIconView = nullptr;

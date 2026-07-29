@@ -12,7 +12,7 @@
 
 enum class SourceKind {
     None,
-    Chrome,          // Chrome / Edge "Live Caption" bubble
+    Chrome,          // Google Chrome "Live Caption" bubble
     WindowsLiveCaptions,  // Windows 11 built-in Live captions
 };
 

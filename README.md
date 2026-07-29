@@ -55,6 +55,8 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 | **Send** | Replaces the picked web tab's chat input with the selected caption text. |
 | **Press Enter** | Also presses Enter in the picked chat input after inserting the selection. Enter in this app triggers Send when checked. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
+| **Save** (right panel) | Exports the currently displayed captions to a UTF-8 text file. |
+| **Clear** (right panel) | Clears the currently displayed captions. |
 | **Settings** (right panel) | Opens caption-source, theme, and Send-hotkey preferences. |
 | **Pick window** (right panel) | Drag onto a browser/WebView window to select its active tab. The selected window's icon appears beneath the unchanged picker button. |
 | Double-click empty pane space | Same as Send. |
@@ -71,7 +73,7 @@ selection is implemented directly on it:
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
 | Left gutter (75px) | Click or drag to select whole lines, including their line breaks. Arrow cursor; the row under the pointer lights up. |
-| Right panel (45px) | Full-height strip to the right of the scrollbar, with Pick window and the selected target icon at the top and Settings at the bottom. |
+| Right panel (45px) | Full-height strip to the right of the scrollbar, with Pick window and the selected target icon at the top and Save, Clear, and Settings at the bottom. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
 
@@ -119,8 +121,10 @@ action as the button, including the current Press Enter checkbox state.
 ## Settings
 
 The Settings window chooses Windows 11 Live Captions or Chrome Live Caption as
-the sole capture source, switches the app between Dark, Light, and System
-themes, and configures the Send hotkey. Preferences live in
+the sole capture source. The choice is strict: Windows mode only attaches to
+`LiveCaptions.exe`, while Chrome mode only attaches to a Live Caption window
+owned by `chrome.exe`. It also switches the app between Dark, Light, and System
+themes and configures the Send hotkey. Preferences live in
 `LiveCaptionView.ini` next to the executable along with font, size, line
 spacing, checkbox states, window position, `BottomPanelHeight` (where the
 caption/bottom-panel divider sits, in 96 dpi units), `TranscriptPath` (blank

@@ -7,6 +7,7 @@
 #include <cwctype>
 #include <vector>
 
+#include "CaptionSourceMatcher.h"
 #include "Util.h"
 
 namespace {
@@ -60,18 +61,15 @@ BOOL CALLBACK EnumProc(HWND hwnd, LPARAM param) {
     if (pid == 0 || pid == ctx->selfPid) return TRUE;
 
     const std::wstring image = ProcessImageName(pid);
-    if (ctx->choice == CaptionSourceChoice::WindowsLiveCaptions &&
-        image == L"livecaptions.exe") {
-        ctx->found = hwnd;
-        ctx->kind = SourceKind::WindowsLiveCaptions;
-        return FALSE;
-    }
-
+    // Checking the process as well as the title is essential here. The Windows
+    // panel is titled "Live captions", which also contains "live caption" and
+    // would otherwise be mistaken for Chrome when Chrome is selected.
     const std::wstring title = ToLower(WindowTitle(hwnd));
-    if (ctx->choice == CaptionSourceChoice::Chrome &&
-        title.find(L"live caption") != std::wstring::npos && ctx->found == nullptr) {
+    if (caption_source_detail::IsWindowForChoice(ctx->choice, image, title)) {
         ctx->found = hwnd;
-        ctx->kind = SourceKind::Chrome;
+        ctx->kind = ctx->choice == CaptionSourceChoice::Chrome
+                        ? SourceKind::Chrome
+                        : SourceKind::WindowsLiveCaptions;
         return FALSE;
     }
     return TRUE;

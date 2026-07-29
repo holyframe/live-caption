@@ -46,6 +46,7 @@ target_link_libraries(LiveCaptionView PRIVATE
     shlwapi
     uxtheme
     advapi32
+    comdlg32
 )
 
 if(MSVC)

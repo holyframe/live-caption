@@ -10,6 +10,12 @@ bool CaptureEngine::Start(HWND notifyWindow, const std::wstring& transcriptPath,
                           int pollIntervalMs, CaptionSourceChoice sourceChoice) {
     if (m_running.load(std::memory_order_acquire)) return true;
 
+    // Start always represents a new capture session. In particular, changing
+    // the configured source stops and restarts this same engine object; keeping
+    // the previous merger history would make the new source append to it and
+    // cause already-flushed lines to be written a second time.
+    m_merger.Reset();
+    m_sawChangeEvent = false;
     m_pollIntervalMs = (pollIntervalMs >= 1 && pollIntervalMs <= 1000)
                            ? static_cast<DWORD>(pollIntervalMs)
                            : kDefaultPollIntervalMs;
