@@ -16,6 +16,11 @@ enum class SourceKind {
     WindowsLiveCaptions,  // Windows 11 built-in Live captions
 };
 
+enum class CaptionSourceChoice {
+    WindowsLiveCaptions,
+    Chrome,
+};
+
 const wchar_t* SourceKindName(SourceKind kind);
 
 // Reads caption text out of another process's window via UI Automation.
@@ -32,7 +37,7 @@ public:
     void Shutdown();
 
     // Looks for a supported caption window. Returns true if one is attached.
-    bool Attach();
+    bool Attach(CaptionSourceChoice choice = CaptionSourceChoice::WindowsLiveCaptions);
     void Detach();
 
     bool IsAttached() const { return m_textElement != nullptr; }
@@ -63,7 +68,7 @@ private:
     // calls, instead of re-probing all three every time.
     enum class ReadStrategy { None, TextPattern, ValuePattern, Name };
 
-    static Candidate FindCaptionWindow();
+    static Candidate FindCaptionWindow(CaptionSourceChoice choice);
     ComPtr<IUIAutomationElement> ResolveTextElement(IUIAutomationElement* root, SourceKind kind);
     bool ExtractText(IUIAutomationElement* element, std::wstring& out);
     bool ProbeStrategy();

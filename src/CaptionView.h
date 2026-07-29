@@ -30,6 +30,7 @@ public:
     void Clear();
 
     void SetTypography(const std::wstring& fontFamily, int fontSizePt, double lineSpacing);
+    void SetDarkTheme(bool dark);
     void ScrollByLines(int lines);
     void ScrollToBottom();
 
@@ -152,6 +153,7 @@ private:
     int          m_fontSizePt = 12;
     double       m_lineSpacing = 1.3;
     UINT         m_dpi = 96;
+    bool         m_darkTheme = true;
 
     // Caps memory for multi-hour sessions; older lines stay in the transcript
     // file but scroll out of the viewer.

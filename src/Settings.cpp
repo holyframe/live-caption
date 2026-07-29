@@ -45,6 +45,16 @@ void Settings::Load() {
     const std::wstring file = FilePath();
     if (::GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES) return;
 
+    const int source = ReadInt(L"CaptionSource", static_cast<int>(captionSource), file);
+    captionSource = source == static_cast<int>(CaptionSourcePreference::ChromeLiveCaption)
+                        ? CaptionSourcePreference::ChromeLiveCaption
+                        : CaptionSourcePreference::WindowsLiveCaptions;
+    const int savedTheme = ReadInt(L"Theme", static_cast<int>(theme), file);
+    theme = savedTheme >= static_cast<int>(UiTheme::Dark) &&
+                    savedTheme <= static_cast<int>(UiTheme::System)
+                ? static_cast<UiTheme>(savedTheme)
+                : UiTheme::Dark;
+
     fontFamily  = ReadString(L"FontFamily", fontFamily, file);
     fontSizePt  = ReadInt(L"FontSizePt", fontSizePt, file);
     lineSpacing = _wtof(ReadString(L"LineSpacing", L"1.3", file).c_str());
@@ -61,8 +71,12 @@ void Settings::Load() {
     pollIntervalMs = ReadInt(L"PollIntervalMs", pollIntervalMs, file);
     if (pollIntervalMs < 1 || pollIntervalMs > 1000) pollIntervalMs = 8;
 
-    hotkeyModifiers  = static_cast<unsigned>(ReadInt(L"HotkeyModifiers", static_cast<int>(hotkeyModifiers), file));
-    hotkeyVirtualKey = static_cast<unsigned>(ReadInt(L"HotkeyVirtualKey", static_cast<int>(hotkeyVirtualKey), file));
+    // These use Send-specific keys because older builds used the similarly
+    // named values for an unrelated show/hide shortcut.
+    hotkeyModifiers = static_cast<unsigned>(
+        ReadInt(L"SendHotkeyModifiers", static_cast<int>(hotkeyModifiers), file));
+    hotkeyVirtualKey = static_cast<unsigned>(
+        ReadInt(L"SendHotkeyVirtualKey", static_cast<int>(hotkeyVirtualKey), file));
 
     windowX = ReadInt(L"WindowX", windowX, file);
     windowY = ReadInt(L"WindowY", windowY, file);
@@ -79,6 +93,9 @@ void Settings::Load() {
 void Settings::Save() const {
     const std::wstring file = FilePath();
 
+    WriteInt(L"CaptionSource", static_cast<int>(captionSource), file);
+    WriteInt(L"Theme", static_cast<int>(theme), file);
+
     WriteString(L"FontFamily", fontFamily, file);
     WriteInt(L"FontSizePt", fontSizePt, file);
 
@@ -93,8 +110,8 @@ void Settings::Save() const {
     WriteString(L"TranscriptPath", transcriptPath, file);
     WriteInt(L"PollIntervalMs", pollIntervalMs, file);
 
-    WriteInt(L"HotkeyModifiers", static_cast<int>(hotkeyModifiers), file);
-    WriteInt(L"HotkeyVirtualKey", static_cast<int>(hotkeyVirtualKey), file);
+    WriteInt(L"SendHotkeyModifiers", static_cast<int>(hotkeyModifiers), file);
+    WriteInt(L"SendHotkeyVirtualKey", static_cast<int>(hotkeyVirtualKey), file);
 
     WriteInt(L"WindowX", windowX, file);
     WriteInt(L"WindowY", windowY, file);

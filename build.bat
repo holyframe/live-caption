@@ -26,7 +26,7 @@ set "OBJDIR=%OUTDIR%\obj"
 if not exist "%OBJDIR%" mkdir "%OBJDIR%"
 
 set "CFLAGS=/nologo /std:c++20 /W4 /permissive- /utf-8 /EHsc /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX /I src /I resources"
-set "LIBS=user32.lib gdi32.lib comctl32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib uuid.lib dwmapi.lib shlwapi.lib uxtheme.lib"
+set "LIBS=user32.lib gdi32.lib comctl32.lib d2d1.lib dwrite.lib ole32.lib oleaut32.lib uuid.lib dwmapi.lib shlwapi.lib uxtheme.lib advapi32.lib"
 
 if /i "%~1"=="debug" (
     set "CFLAGS=%CFLAGS% /MTd /Od /Zi /RTC1"
@@ -45,6 +45,7 @@ cl %CFLAGS% /c ^
     src\main.cpp ^
     src\Util.cpp ^
     src\Settings.cpp ^
+    src\SettingsDialog.cpp ^
     src\CaptionMerger.cpp ^
     src\TranscriptStore.cpp ^
     src\CaptionSource.cpp ^

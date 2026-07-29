@@ -2,8 +2,21 @@
 
 #include <string>
 
+enum class CaptionSourcePreference {
+    WindowsLiveCaptions,
+    ChromeLiveCaption,
+};
+
+enum class UiTheme {
+    Dark,
+    Light,
+    System,
+};
+
 // Simple INI-backed preferences stored next to the executable.
 struct Settings {
+    CaptionSourcePreference captionSource = CaptionSourcePreference::WindowsLiveCaptions;
+    UiTheme      theme        = UiTheme::Dark;
     std::wstring fontFamily   = L"Segoe UI";
     int          fontSizePt   = 12;
     double       lineSpacing  = 1.3;
@@ -21,14 +34,8 @@ struct Settings {
     // costs about 0.4 ms, so a tight interval is affordable.
     int pollIntervalMs = 8;
 
-    // Global show/hide hotkey.
-    //
-    // Windows rejects RegisterHotKey for a bare Shift+<letter> combination, so
-    // the "Shift+Z" from the original design cannot be honoured literally; the
-    // only way to get it would be a system-wide low-level keyboard hook, which
-    // would also stop you typing a capital Z anywhere else. Ctrl+Shift+Z is the
-    // closest combination the OS will actually grant.
-    unsigned hotkeyModifiers = 0x0002 /*MOD_CONTROL*/ | 0x0004 /*MOD_SHIFT*/;
+    // Global shortcut for the Send button.
+    unsigned hotkeyModifiers = 0x0004 /*MOD_SHIFT*/;
     unsigned hotkeyVirtualKey = 'Z';
 
     int windowX = -1, windowY = -1, windowW = 960, windowH = 620;

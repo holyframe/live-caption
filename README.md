@@ -55,10 +55,10 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 | **Send** | Replaces the picked web tab's chat input with the selected caption text. |
 | **Press Enter** | Also presses Enter in the picked chat input after inserting the selection. Enter in this app triggers Send when checked. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
-| **Settings** (right panel) | Gear button at the foot of the right strip. Placeholder for now. |
+| **Settings** (right panel) | Opens caption-source, theme, and Send-hotkey preferences. |
 | **Pick window** (right panel) | Drag onto a browser/WebView window to select its active tab. The selected window's icon appears beneath the unchanged picker button. |
 | Double-click empty pane space | Same as Send. |
-| **Ctrl+Shift+Z** | Global hotkey that shows/hides the window. |
+| **Shift+Z** | Global shortcut for Send (configurable in Settings). |
 
 ### Selecting caption text
 
@@ -109,20 +109,19 @@ fields, password fields, and tabs with no visible editable input are rejected.
 
 ### About the hotkey
 
-The original design called for **Shift+Z**, but Windows refuses to grant a bare
-`Shift`+letter global hotkey through `RegisterHotKey`, and taking it anyway
-would require a system-wide keyboard hook that stopped you typing a capital Z in
-any other program. The default is therefore **Ctrl+Shift+Z**. It is
-configurable via `HotkeyModifiers` / `HotkeyVirtualKey` in the INI, and if the
-configured combination is unavailable the app falls back through
-`Ctrl+Shift`, `Ctrl+Alt`, then `Ctrl+Alt+Shift` and shows whichever one it
-actually got in the title bar.
+The default global Send shortcut is **Shift+Z**. Use **Settings → Change…** to
+focus the hotkey field, then press a new combination. If another application
+already owns that shortcut, this app reports that it is unavailable instead of
+silently substituting a different one.
 
 ## Settings
 
-Preferences live in `LiveCaptionView.ini` next to the executable: font, size,
-line spacing, checkbox states, window position, `BottomPanelHeight` (where the
-caption/bottom-panel divider sits, in 96 dpi units), hotkey, `TranscriptPath` (blank
+The Settings window chooses Windows 11 Live Captions or Chrome Live Caption as
+the sole capture source, switches the app between Dark, Light, and System
+themes, and configures the Send hotkey. Preferences live in
+`LiveCaptionView.ini` next to the executable along with font, size, line
+spacing, checkbox states, window position, `BottomPanelHeight` (where the
+caption/bottom-panel divider sits, in 96 dpi units), `TranscriptPath` (blank
 means `captions.txt` beside the executable), and `PollIntervalMs` (how often the
 caption source is re-read; default 8, see [Staying real-time](#staying-real-time)).
 

@@ -4,6 +4,26 @@
 // Embed the application manifest (common controls v6 + per-monitor DPI).
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "app.manifest"
 
+IDD_SETTINGS DIALOGEX 0, 0, 278, 157
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Settings"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "Caption source", -1, 12, 18, 66, 10
+    COMBOBOX        IDC_CBO_SOURCE, 84, 14, 178, 80,
+                    CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Choose which live-caption window this app reads.", -1, 84, 34, 178, 18
+    LTEXT           "Theme", -1, 12, 64, 66, 10
+    COMBOBOX        IDC_CBO_THEME, 84, 60, 178, 70,
+                    CBS_DROPDOWNLIST | CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Hotkey", -1, 12, 94, 66, 10
+    CONTROL         "", IDC_EDT_HOTKEY, "msctls_hotkey32",
+                    WS_BORDER | WS_TABSTOP, 84, 90, 91, 14
+    PUSHBUTTON      "Change...", IDC_BTN_HOTKEY_CHANGE, 181, 89, 81, 16, WS_TABSTOP
+    DEFPUSHBUTTON   "OK", IDOK, 151, 128, 53, 18, WS_TABSTOP
+    PUSHBUTTON      "Cancel", IDCANCEL, 209, 128, 53, 18, WS_TABSTOP
+END
+
 VS_VERSION_INFO VERSIONINFO
     FILEVERSION     1,0,0,0
     PRODUCTVERSION  1,0,0,0

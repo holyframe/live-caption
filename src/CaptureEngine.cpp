@@ -7,13 +7,14 @@
 CaptureEngine::~CaptureEngine() { Stop(); }
 
 bool CaptureEngine::Start(HWND notifyWindow, const std::wstring& transcriptPath,
-                          int pollIntervalMs) {
+                          int pollIntervalMs, CaptionSourceChoice sourceChoice) {
     if (m_running.load(std::memory_order_acquire)) return true;
 
     m_pollIntervalMs = (pollIntervalMs >= 1 && pollIntervalMs <= 1000)
                            ? static_cast<DWORD>(pollIntervalMs)
                            : kDefaultPollIntervalMs;
     m_notifyWindow = notifyWindow;
+    m_sourceChoice = sourceChoice;
     m_stopEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);   // manual reset
     m_changeEvent = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);  // auto reset
     if (!m_stopEvent || !m_changeEvent) {
@@ -97,10 +98,12 @@ void CaptureEngine::Run(std::wstring transcriptPath) {
     for (;;) {
         if (!m_source.IsAttached()) {
             if (!searchingAnnounced) {
-                PostStatus(L"Waiting for Chrome Live Caption or Windows 11 Live captions\u2026");
+                PostStatus(m_sourceChoice == CaptionSourceChoice::Chrome
+                               ? L"Waiting for Chrome Live Caption\u2026"
+                               : L"Waiting for Windows 11 Live Captions\u2026");
                 searchingAnnounced = true;
             }
-            if (m_source.Attach()) {
+            if (m_source.Attach(m_sourceChoice)) {
                 searchingAnnounced = false;
                 lastKind = m_source.Kind();
                 m_sourceWindow.store(m_source.SourceWindow(), std::memory_order_release);

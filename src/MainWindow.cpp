@@ -9,6 +9,7 @@
 #include <set>
 
 #include "Util.h"
+#include "SettingsDialog.h"
 #include "resource.h"
 
 namespace {
@@ -47,6 +48,15 @@ constexpr COLORREF kTextSecondary  = RGB(170, 170, 170);
 constexpr COLORREF kStatusBg       = RGB(28, 28, 28);
 constexpr COLORREF kSplitterLine   = RGB(72, 72, 72);
 constexpr COLORREF kPickOutline    = RGB(255, 0, 0);
+constexpr COLORREF kLightWindowBg      = RGB(255, 255, 255);
+constexpr COLORREF kLightPanelBg       = RGB(246, 246, 246);
+constexpr COLORREF kLightButtonFace    = RGB(240, 240, 240);
+constexpr COLORREF kLightButtonPressed = RGB(220, 220, 220);
+constexpr COLORREF kLightButtonBorder  = RGB(150, 150, 150);
+constexpr COLORREF kLightTextPrimary   = RGB(32, 32, 32);
+constexpr COLORREF kLightTextSecondary = RGB(96, 96, 96);
+constexpr COLORREF kLightStatusBg      = RGB(246, 246, 246);
+constexpr COLORREF kLightSplitterLine  = RGB(205, 205, 205);
 
 // Throttle for "copy real-time"; the caption updates ~10x per second and we do
 // not want to thrash the clipboard that hard.
@@ -65,6 +75,26 @@ void TryDarkControlTheme(HWND hwnd, const wchar_t* theme) {
     if (FAILED(::SetWindowTheme(hwnd, theme, nullptr))) {
         ::SetWindowTheme(hwnd, L"", L"");
     }
+}
+
+bool SystemUsesDarkTheme() {
+    DWORD value = 1;
+    DWORD bytes = sizeof(value);
+    return ::RegGetValueW(HKEY_CURRENT_USER,
+                          L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                          L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &value, &bytes) ==
+               ERROR_SUCCESS &&
+           value == 0;
+}
+
+bool EffectiveDarkTheme(UiTheme theme) {
+    return theme == UiTheme::Dark || (theme == UiTheme::System && SystemUsesDarkTheme());
+}
+
+CaptionSourceChoice ToSourceChoice(CaptionSourcePreference source) {
+    return source == CaptionSourcePreference::ChromeLiveCaption
+               ? CaptionSourceChoice::Chrome
+               : CaptionSourceChoice::WindowsLiveCaptions;
 }
 
 HICON CopyWindowIcon(HWND window) {
@@ -340,13 +370,14 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                                     sizeof(darkTitleBar));
 
             if (!CreateChildren()) return -1;
-            ApplyDarkTheme();
+            ApplyTheme();
             UpdateHotkeyRegistration();
             Layout();
             ApplyTypography();
             ApplyViewMode();
 
-            m_engine.Start(m_hwnd, m_settings.ResolvedTranscriptPath(), m_settings.pollIntervalMs);
+            m_engine.Start(m_hwnd, m_settings.ResolvedTranscriptPath(), m_settings.pollIntervalMs,
+                           ToSourceChoice(m_settings.captionSource));
             SetStatus(std::wstring(L"Saving transcript to ") + m_settings.ResolvedTranscriptPath());
             return 0;
         }
@@ -448,8 +479,9 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             if (hdr && hdr->hwndFrom == m_statusBar && hdr->code == NM_CUSTOMDRAW) {
                 const auto* draw = reinterpret_cast<const NMCUSTOMDRAW*>(lParam);
                 if (draw->dwDrawStage == CDDS_PREPAINT) {
-                    ::SetTextColor(draw->hdc, kTextSecondary);
-                    ::SetBkColor(draw->hdc, kStatusBg);
+                    ::SetTextColor(draw->hdc,
+                                   m_darkTheme ? kTextSecondary : kLightTextSecondary);
+                    ::SetBkColor(draw->hdc, m_darkTheme ? kStatusBg : kLightStatusBg);
                     return CDRF_NEWFONT;
                 }
             }
@@ -471,8 +503,8 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             break;
 
         case WM_HOTKEY:
-            if (wParam == HOTKEY_TOGGLE_VIEW) {
-                ToggleVisibility();
+            if (wParam == HOTKEY_SEND) {
+                OnSend();
                 return 0;
             }
             break;
@@ -506,6 +538,10 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         case WM_CTLCOLORLISTBOX:
             return OnCtlColor(reinterpret_cast<HDC>(wParam), reinterpret_cast<HWND>(lParam));
 
+        case WM_SETTINGCHANGE:
+            if (m_settings.theme == UiTheme::System) ApplyTheme();
+            break;
+
         case WM_CLOSE: {
             // Stop producing before tearing down so no posted payload leaks.
             m_engine.Stop();
@@ -533,7 +569,7 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                 m_pickedWindowIcon = nullptr;
             }
             if (m_hotkeyRegistered) {
-                ::UnregisterHotKey(m_hwnd, HOTKEY_TOGGLE_VIEW);
+                ::UnregisterHotKey(m_hwnd, HOTKEY_SEND);
                 m_hotkeyRegistered = false;
             }
             if (m_controlFont) {
@@ -651,11 +687,18 @@ bool MainWindow::CreateChildren() {
 }
 
 void MainWindow::EnsureThemeBrushes() {
-    if (!m_windowBrush) m_windowBrush = ::CreateSolidBrush(kWindowBg);
-    if (!m_panelBrush) m_panelBrush = ::CreateSolidBrush(kPanelBg);
-    if (!m_buttonBrush) m_buttonBrush = ::CreateSolidBrush(kButtonFace);
-    if (!m_buttonPressedBrush) m_buttonPressedBrush = ::CreateSolidBrush(kButtonPressed);
-    if (!m_splitterBrush) m_splitterBrush = ::CreateSolidBrush(kSplitterLine);
+    if (!m_windowBrush)
+        m_windowBrush = ::CreateSolidBrush(m_darkTheme ? kWindowBg : kLightWindowBg);
+    if (!m_panelBrush)
+        m_panelBrush = ::CreateSolidBrush(m_darkTheme ? kPanelBg : kLightPanelBg);
+    if (!m_buttonBrush)
+        m_buttonBrush = ::CreateSolidBrush(m_darkTheme ? kButtonFace : kLightButtonFace);
+    if (!m_buttonPressedBrush)
+        m_buttonPressedBrush =
+            ::CreateSolidBrush(m_darkTheme ? kButtonPressed : kLightButtonPressed);
+    if (!m_splitterBrush)
+        m_splitterBrush =
+            ::CreateSolidBrush(m_darkTheme ? kSplitterLine : kLightSplitterLine);
 }
 
 void MainWindow::DiscardThemeBrushes() {
@@ -681,20 +724,29 @@ void MainWindow::DiscardThemeBrushes() {
     }
 }
 
-void MainWindow::ApplyDarkTheme() {
+void MainWindow::ApplyTheme() {
+    m_darkTheme = EffectiveDarkTheme(m_settings.theme);
+    DiscardThemeBrushes();
     EnsureThemeBrushes();
 
     const HWND explorer[] = {m_pressEnterCheck,       m_hintLabel, m_rightPanel,
                              m_bottomPanel,           m_statusBar, m_view.Handle(),
                              m_selectedWindowIconView};
-    for (HWND control : explorer) TryDarkControlTheme(control, L"DarkMode_Explorer");
+    for (HWND control : explorer)
+        TryDarkControlTheme(control, m_darkTheme ? L"DarkMode_Explorer" : L"Explorer");
 
     const HWND combos[] = {m_fontCombo, m_sizeCombo, m_spacingCombo};
-    for (HWND control : combos) TryDarkControlTheme(control, L"DarkMode_CFD");
+    for (HWND control : combos)
+        TryDarkControlTheme(control, m_darkTheme ? L"DarkMode_CFD" : L"CFD");
 
     if (m_statusBar) {
-        ::SendMessageW(m_statusBar, SB_SETBKCOLOR, 0, static_cast<LPARAM>(kStatusBg));
+        ::SendMessageW(m_statusBar, SB_SETBKCOLOR, 0,
+                       static_cast<LPARAM>(m_darkTheme ? kStatusBg : kLightStatusBg));
     }
+    m_view.SetDarkTheme(m_darkTheme);
+    const BOOL darkTitleBar = m_darkTheme ? TRUE : FALSE;
+    ::DwmSetWindowAttribute(m_hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &darkTitleBar,
+                            sizeof(darkTitleBar));
 
     ::InvalidateRect(m_hwnd, nullptr, TRUE);
 }
@@ -706,8 +758,12 @@ LRESULT MainWindow::OnCtlColor(HDC dc, HWND control) {
     // The panels, and the controls that sit on the bottom panel, share its fill.
     const bool onPanel = control == m_rightPanel || control == m_bottomPanel ||
                          control == m_hintLabel || control == m_pressEnterCheck;
-    const COLORREF text = isHint ? kTextSecondary : kTextPrimary;
-    const COLORREF background = onPanel ? kPanelBg : kWindowBg;
+    const COLORREF text =
+        m_darkTheme ? (isHint ? kTextSecondary : kTextPrimary)
+                    : (isHint ? kLightTextSecondary : kLightTextPrimary);
+    const COLORREF background =
+        m_darkTheme ? (onPanel ? kPanelBg : kWindowBg)
+                    : (onPanel ? kLightPanelBg : kLightWindowBg);
     const HBRUSH brush = onPanel ? m_panelBrush : m_windowBrush;
 
     ::SetTextColor(dc, text);
@@ -724,7 +780,8 @@ void MainWindow::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
     const HBRUSH fill = pressed ? m_buttonPressedBrush : m_buttonBrush;
     ::FillRect(item.hDC, &item.rcItem, fill ? fill : reinterpret_cast<HBRUSH>(::GetStockObject(DKGRAY_BRUSH)));
 
-    const HPEN border = ::CreatePen(PS_SOLID, 1, kButtonBorder);
+    const HPEN border =
+        ::CreatePen(PS_SOLID, 1, m_darkTheme ? kButtonBorder : kLightButtonBorder);
     const HGDIOBJ oldPen = ::SelectObject(item.hDC, border);
     const HGDIOBJ oldBrush = ::SelectObject(item.hDC, ::GetStockObject(NULL_BRUSH));
     ::Rectangle(item.hDC, item.rcItem.left, item.rcItem.top, item.rcItem.right, item.rcItem.bottom);
@@ -733,7 +790,9 @@ void MainWindow::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
     ::DeleteObject(border);
 
     ::SetBkMode(item.hDC, TRANSPARENT);
-    ::SetTextColor(item.hDC, disabled ? kTextSecondary : kTextPrimary);
+    ::SetTextColor(item.hDC,
+                   m_darkTheme ? (disabled ? kTextSecondary : kTextPrimary)
+                               : (disabled ? kLightTextSecondary : kLightTextPrimary));
 
     RECT contentRc = item.rcItem;
     if (pressed) ::OffsetRect(&contentRc, 1, 1);
@@ -777,7 +836,9 @@ void MainWindow::DrawSelectedWindowIcon(const DRAWITEMSTRUCT& item) const {
                              : reinterpret_cast<HBRUSH>(::GetStockObject(DKGRAY_BRUSH)));
 
     const COLORREF borderColor =
-        m_selectedIconRemoveDrag && m_selectedIconOutside ? kPickOutline : kButtonBorder;
+        m_selectedIconRemoveDrag && m_selectedIconOutside
+            ? kPickOutline
+            : (m_darkTheme ? kButtonBorder : kLightButtonBorder);
     const HPEN border = ::CreatePen(PS_SOLID, 1, borderColor);
     const HGDIOBJ oldPen = ::SelectObject(item.hDC, border);
     const HGDIOBJ oldBrush = ::SelectObject(item.hDC, ::GetStockObject(NULL_BRUSH));
@@ -1001,45 +1062,18 @@ void MainWindow::Layout() {
 
 void MainWindow::UpdateHotkeyRegistration() {
     if (m_hotkeyRegistered) {
-        ::UnregisterHotKey(m_hwnd, HOTKEY_TOGGLE_VIEW);
+        ::UnregisterHotKey(m_hwnd, HOTKEY_SEND);
         m_hotkeyRegistered = false;
     }
 
     const unsigned key = m_settings.hotkeyVirtualKey;
-    // Fall back through progressively more heavily modified combinations: the
-    // preferred one may be rejected outright (bare Shift+letter) or already be
-    // owned by another process.
-    const unsigned candidates[] = {
-        m_settings.hotkeyModifiers,
-        MOD_CONTROL | MOD_SHIFT,
-        MOD_CONTROL | MOD_ALT,
-        MOD_CONTROL | MOD_ALT | MOD_SHIFT,
-    };
-
-    unsigned active = 0;
-    for (unsigned modifiers : candidates) {
-        if (modifiers == 0) continue;
-        if (::RegisterHotKey(m_hwnd, HOTKEY_TOGGLE_VIEW, modifiers | MOD_NOREPEAT, key)) {
-            active = modifiers;
-            m_hotkeyRegistered = true;
-            break;
-        }
+    if (key != 0) {
+        m_hotkeyRegistered =
+            ::RegisterHotKey(m_hwnd, HOTKEY_SEND, m_settings.hotkeyModifiers | MOD_NOREPEAT, key) !=
+            FALSE;
     }
-
-    std::wstring title = kBaseTitle;
-    if (m_hotkeyRegistered) {
-        m_settings.hotkeyModifiers = active;
-        std::wstring combo;
-        if (active & MOD_CONTROL) combo += L"Ctrl+";
-        if (active & MOD_ALT) combo += L"Alt+";
-        if (active & MOD_SHIFT) combo += L"Shift+";
-        if (active & MOD_WIN) combo += L"Win+";
-        combo.push_back(static_cast<wchar_t>(key));
-        title += L" (Hotkey - " + combo + L")";
-    } else {
-        title += L" (hotkey unavailable)";
-    }
-    ::SetWindowTextW(m_hwnd, title.c_str());
+    ::SetWindowTextW(m_hwnd, kBaseTitle);
+    if (!m_hotkeyRegistered) SetStatus(L"The Send hotkey is already in use by another app.");
 }
 
 void MainWindow::SetStatus(const std::wstring& text) {
@@ -1064,15 +1098,6 @@ void MainWindow::ApplyViewMode() {
                        SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
     }
     Layout();
-}
-
-void MainWindow::ToggleVisibility() {
-    if (::IsWindowVisible(m_hwnd) && !::IsIconic(m_hwnd)) {
-        ::ShowWindow(m_hwnd, SW_HIDE);
-    } else {
-        ::ShowWindow(m_hwnd, SW_SHOW);
-        ::SetForegroundWindow(m_hwnd);
-    }
 }
 
 void MainWindow::OnCommand(int controlId, int notifyCode) {
@@ -1177,8 +1202,21 @@ void MainWindow::OnSend() {
 }
 
 void MainWindow::OnSettings() {
-    // Placeholder until a settings surface exists.
-    SetStatus(L"Settings is not wired up yet.");
+    const CaptionSourcePreference previousSource = m_settings.captionSource;
+    if (!ShowSettingsDialog(m_hwnd, m_instance, m_settings)) return;
+
+    m_settings.Save();
+    ApplyTheme();
+    UpdateHotkeyRegistration();
+
+    if (previousSource != m_settings.captionSource) {
+        m_engine.Stop();
+        DrainPendingPayloads();
+        m_view.Clear();
+        m_engine.Start(m_hwnd, m_settings.ResolvedTranscriptPath(), m_settings.pollIntervalMs,
+                       ToSourceChoice(m_settings.captionSource));
+    }
+    SetStatus(L"Settings saved.");
 }
 
 void MainWindow::OnPickWindow() {

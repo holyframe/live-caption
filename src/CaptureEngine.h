@@ -32,7 +32,8 @@ public:
 
     // `notifyWindow` receives WM_APP_CAPTION_UPDATE / WM_APP_STATUS /
     // WM_APP_SOURCE_CHANGED.
-    bool Start(HWND notifyWindow, const std::wstring& transcriptPath, int pollIntervalMs);
+    bool Start(HWND notifyWindow, const std::wstring& transcriptPath, int pollIntervalMs,
+               CaptionSourceChoice sourceChoice);
     void Stop();
 
     bool IsRunning() const { return m_running.load(std::memory_order_acquire); }
@@ -56,6 +57,7 @@ private:
     static constexpr DWORD kMinReadIntervalMs = 2;
 
     DWORD              m_pollIntervalMs = kDefaultPollIntervalMs;
+    CaptionSourceChoice m_sourceChoice = CaptionSourceChoice::WindowsLiveCaptions;
     bool               m_sawChangeEvent = false;
     std::thread        m_thread;
     HANDLE             m_stopEvent = nullptr;

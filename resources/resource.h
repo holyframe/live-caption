@@ -21,7 +21,14 @@
 #define IDC_SELECTED_WINDOW   1018
 
 // ---- Global hotkey --------------------------------------------------------
-#define HOTKEY_TOGGLE_VIEW    0xB001
+#define HOTKEY_SEND           0xB001
+
+// ---- Settings dialog -----------------------------------------------------
+#define IDD_SETTINGS          2001
+#define IDC_CBO_SOURCE        2002
+#define IDC_CBO_THEME         2003
+#define IDC_EDT_HOTKEY        2004
+#define IDC_BTN_HOTKEY_CHANGE 2005
 
 // ---- Private window messages ---------------------------------------------
 // WM_APP_CAPTION_UPDATE : wParam unused, lParam = CaptionUpdate* (receiver owns)

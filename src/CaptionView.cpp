@@ -14,10 +14,15 @@ namespace {
 constexpr const wchar_t* kClassName = L"LiveCaptionViewPane";
 
 // Colours sampled to match the dark caption pane in the reference design.
-constexpr D2D1_COLOR_F kBackground = {43.0f / 255.0f, 43.0f / 255.0f, 43.0f / 255.0f, 1.0f};
-constexpr D2D1_COLOR_F kForeground = {228.0f / 255.0f, 228.0f / 255.0f, 228.0f / 255.0f, 1.0f};
-constexpr D2D1_COLOR_F kSelection  = {88.0f / 255.0f, 88.0f / 255.0f, 88.0f / 255.0f, 1.0f};
-constexpr D2D1_COLOR_F kGutterHover = {55.0f / 255.0f, 55.0f / 255.0f, 55.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kDarkBackground = {43.0f / 255.0f, 43.0f / 255.0f, 43.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kDarkForeground = {228.0f / 255.0f, 228.0f / 255.0f, 228.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kDarkSelection  = {88.0f / 255.0f, 88.0f / 255.0f, 88.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kDarkGutterHover = {55.0f / 255.0f, 55.0f / 255.0f, 55.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kLightBackground = {1.0f, 1.0f, 1.0f, 1.0f};
+constexpr D2D1_COLOR_F kLightForeground = {32.0f / 255.0f, 32.0f / 255.0f, 32.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kLightSelection = {198.0f / 255.0f, 220.0f / 255.0f, 1.0f, 1.0f};
+constexpr D2D1_COLOR_F kLightGutterHover = {238.0f / 255.0f, 238.0f / 255.0f,
+                                            238.0f / 255.0f, 1.0f};
 
 // Left strip is the line-select gutter; a modest right margin keeps glyphs off
 // the scrollbar. The control-button panel lives outside this pane, to the right
@@ -68,6 +73,16 @@ bool CaptionView::Create(HWND parent, HINSTANCE instance, int controlId) {
     // without it the system keeps the light classic thumb.
     ::SetWindowTheme(m_hwnd, L"DarkMode_Explorer", nullptr);
     return EnsureDeviceResources();
+}
+
+void CaptionView::SetDarkTheme(bool dark) {
+    if (m_darkTheme == dark) return;
+    m_darkTheme = dark;
+    ::SetWindowTheme(m_hwnd, dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    m_textBrush.Reset();
+    m_selectionBrush.Reset();
+    m_hoverBrush.Reset();
+    ::InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 LRESULT CALLBACK CaptionView::WndProcThunk(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -331,19 +346,22 @@ bool CaptionView::EnsureDeviceResources() {
         m_hoverBrush.Reset();
     }
     if (!m_textBrush) {
-        if (FAILED(m_renderTarget->CreateSolidColorBrush(kForeground,
+        if (FAILED(m_renderTarget->CreateSolidColorBrush(
+                m_darkTheme ? kDarkForeground : kLightForeground,
                                                          m_textBrush.ReleaseAndGetAddressOf()))) {
             return false;
         }
     }
     if (!m_selectionBrush) {
-        if (FAILED(m_renderTarget->CreateSolidColorBrush(kSelection,
+        if (FAILED(m_renderTarget->CreateSolidColorBrush(
+                m_darkTheme ? kDarkSelection : kLightSelection,
                                                          m_selectionBrush.ReleaseAndGetAddressOf()))) {
             return false;
         }
     }
     if (!m_hoverBrush) {
-        if (FAILED(m_renderTarget->CreateSolidColorBrush(kGutterHover,
+        if (FAILED(m_renderTarget->CreateSolidColorBrush(
+                m_darkTheme ? kDarkGutterHover : kLightGutterHover,
                                                          m_hoverBrush.ReleaseAndGetAddressOf()))) {
             return false;
         }
@@ -616,7 +634,7 @@ void CaptionView::OnPaint() {
         const float scale = static_cast<float>(m_dpi) / 96.0f;
 
         m_renderTarget->BeginDraw();
-        m_renderTarget->Clear(kBackground);
+        m_renderTarget->Clear(m_darkTheme ? kDarkBackground : kLightBackground);
 
         const float originX = GutterWidth();
         const float paintWidth = static_cast<float>(rc.right - rc.left);

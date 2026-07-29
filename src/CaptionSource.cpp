@@ -46,6 +46,7 @@ struct EnumContext {
     HWND       found = nullptr;
     SourceKind kind = SourceKind::None;
     DWORD      selfPid = 0;
+    CaptionSourceChoice choice = CaptionSourceChoice::WindowsLiveCaptions;
 };
 
 BOOL CALLBACK EnumProc(HWND hwnd, LPARAM param) {
@@ -59,17 +60,19 @@ BOOL CALLBACK EnumProc(HWND hwnd, LPARAM param) {
     if (pid == 0 || pid == ctx->selfPid) return TRUE;
 
     const std::wstring image = ProcessImageName(pid);
-    if (image == L"livecaptions.exe") {
+    if (ctx->choice == CaptionSourceChoice::WindowsLiveCaptions &&
+        image == L"livecaptions.exe") {
         ctx->found = hwnd;
         ctx->kind = SourceKind::WindowsLiveCaptions;
-        return FALSE;  // built-in captions win over the browser bubble
+        return FALSE;
     }
 
     const std::wstring title = ToLower(WindowTitle(hwnd));
-    if (title.find(L"live caption") != std::wstring::npos && ctx->found == nullptr) {
+    if (ctx->choice == CaptionSourceChoice::Chrome &&
+        title.find(L"live caption") != std::wstring::npos && ctx->found == nullptr) {
         ctx->found = hwnd;
         ctx->kind = SourceKind::Chrome;
-        // Keep scanning in case the Windows 11 panel is also open.
+        return FALSE;
     }
     return TRUE;
 }
@@ -295,17 +298,18 @@ bool CaptionSource::ReadWithStrategy(std::wstring& out) {
     }
 }
 
-CaptionSource::Candidate CaptionSource::FindCaptionWindow() {
+CaptionSource::Candidate CaptionSource::FindCaptionWindow(CaptionSourceChoice choice) {
     EnumContext ctx;
     ctx.selfPid = ::GetCurrentProcessId();
+    ctx.choice = choice;
     ::EnumWindows(EnumProc, reinterpret_cast<LPARAM>(&ctx));
     return Candidate{ctx.found, ctx.kind};
 }
 
-bool CaptionSource::Attach() {
+bool CaptionSource::Attach(CaptionSourceChoice choice) {
     if (!m_automation && !Initialize()) return false;
 
-    const Candidate candidate = FindCaptionWindow();
+    const Candidate candidate = FindCaptionWindow(choice);
     if (!candidate.hwnd) return false;
 
     ComPtr<IUIAutomationElement> root;

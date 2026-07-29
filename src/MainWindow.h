@@ -31,7 +31,7 @@ private:
     void PopulateSizeCombo();
     void PopulateSpacingCombo();
     void ApplyControlFont();
-    void ApplyDarkTheme();
+    void ApplyTheme();
     void EnsureThemeBrushes();
     void DiscardThemeBrushes();
     void DrawDarkButton(const DRAWITEMSTRUCT& item) const;
@@ -46,7 +46,6 @@ private:
     void SetStatus(const std::wstring& text);
     void ApplyTypography();
     void ApplyViewMode();
-    void ToggleVisibility();
 
     void OnCommand(int controlId, int notifyCode);
     void OnSend();
@@ -77,6 +76,7 @@ private:
     UINT      m_dpi = 96;
     HFONT     m_controlFont = nullptr;
     bool      m_hotkeyRegistered = false;
+    bool      m_darkTheme = true;
 
     HWND m_sendButton = nullptr;
     HWND m_pressEnterCheck = nullptr;
