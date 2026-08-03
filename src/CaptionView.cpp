@@ -222,7 +222,7 @@ LRESULT CaptionView::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                 // A second click in the gutter is still a line select, never Send.
                 EndDrag();
                 size_t line = 0;
-                if (LineIndexFromPoint(pt, &line)) SelectLinesTo(line, false);
+                if (LineIndexFromPoint(pt, &line)) SelectLineThroughEnd(line);
                 return 0;
             }
             TextPos position;
@@ -891,6 +891,21 @@ void CaptionView::SelectWordAt(const TextPos& position) {
     ::InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
+void CaptionView::SelectLineThroughEnd(size_t absoluteLine) {
+    if (m_lines.empty()) return;
+
+    const size_t first = m_lineOffset;
+    const size_t last = m_lineOffset + m_lines.size() - 1;
+    absoluteLine = std::clamp(absoluteLine, first, last);
+
+    m_lineDragOrigin = absoluteLine;
+    m_selectionAnchor = TextPos{absoluteLine, 0};
+    m_selectionCaret = TranscriptEnd();
+    m_selectionValid = true;
+    m_lineSelectionActive = true;
+    ::InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
 void CaptionView::SelectLinesTo(size_t absoluteLine, bool keepAnchor) {
     if (m_lines.empty()) return;
 
@@ -1044,7 +1059,13 @@ void CaptionView::BeginDrag(POINT client, bool keepAnchor) {
             // the existing anchor; an existing line selection keeps its origin.
             m_lineDragOrigin = m_selectionAnchor.line;
         }
-        SelectLinesTo(line, keepAnchor);
+        if (keepAnchor && m_selectionValid) {
+            SelectLinesTo(line, true);
+        } else {
+            // A plain gutter click selects the transcript tail. If the pointer
+            // moves, UpdateDrag converts this into the normal fixed line range.
+            SelectLineThroughEnd(line);
+        }
         return;
     }
 

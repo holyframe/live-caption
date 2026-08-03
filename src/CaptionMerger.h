@@ -53,6 +53,12 @@ private:
     // full overlap search.
     bool TryFastPath(std::wstring& cleaned, size_t rawPrefix, Update& out);
 
+    // Detects a full-buffer provider resurfacing an older starting point. The
+    // match must be long, unique, recent, and reach the current transcript tail
+    // so ordinary repeated speech is not mistaken for a revision.
+    bool FindBackwardSnapshotStart(const std::vector<std::wstring>& normWords,
+                                   size_t* start) const;
+
     // Smallest overlap we trust. A one- or two-word match on filler words like
     // "the" would otherwise truncate good history.
     static constexpr size_t kMinOverlapWords = 3;
@@ -62,6 +68,12 @@ private:
 
     // Largest tail the fast path expects a source to rewrite in one step.
     static constexpr size_t kMaxRevisedTailWords = 32;
+
+    // Backward snapshots are accepted only after several independent words
+    // establish a strong alignment with recent transcript history.
+    static constexpr size_t kBackwardAnchorWords = 8;
+    static constexpr size_t kBackwardProbeWords = 32;
+    static constexpr size_t kBackwardMinAgreementWords = 16;
 
     std::vector<Word>         m_words;         // every word of the transcript
     std::vector<std::wstring> m_lines;         // m_words grouped into sentences

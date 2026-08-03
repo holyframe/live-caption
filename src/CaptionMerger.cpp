@@ -85,9 +85,18 @@ CaptionMerger::Update CaptionMerger::Ingest(std::wstring_view snapshot) {
         }
     }
 
-    // No overlap means the buffer scrolled further than one snapshot's worth
-    // (or the source was swapped); append rather than risk dropping text.
-    const size_t truncateAt = m_words.size() - overlap;
+    // No end-to-start overlap normally means the buffer scrolled further than
+    // one snapshot's worth, so appending is the safe default. Full-buffer UIA
+    // providers can also jump backwards and resurface text already present in
+    // the transcript. Accept that as a revision only when a guarded alignment
+    // proves this snapshot reaches the current tail.
+    size_t truncateAt = m_words.size() - overlap;
+    if (overlap == 0) {
+        size_t backwardStart = 0;
+        if (FindBackwardSnapshotStart(normWords, &backwardStart)) {
+            truncateAt = backwardStart;
+        }
+    }
 
     // Most of the overlapping region is usually byte-for-byte identical: the
     // recogniser only rewrites its unstable tail. Skipping the unchanged prefix
@@ -168,6 +177,81 @@ bool CaptionMerger::TryFastPath(std::wstring& cleaned, size_t rawPrefix, Update&
     m_lastSnapshotRaw = std::move(cleaned);
 
     out = Update{true, RebuildLinesFrom(changeAt)};
+    return true;
+}
+
+bool CaptionMerger::FindBackwardSnapshotStart(
+    const std::vector<std::wstring>& normWords, size_t* start) const {
+    if (!start || m_lastSnapshotWords < kBackwardAnchorWords ||
+        normWords.size() < kBackwardAnchorWords || m_words.size() < kBackwardAnchorWords) {
+        return false;
+    }
+
+    // A hard cut to a short, unrelated buffer is new speech, even when its
+    // opening happens to repeat an old phrase. A genuine backward jump from a
+    // full-buffer provider is normally close in size to its preceding read.
+    const size_t minimumSnapshotWords = (m_lastSnapshotWords * 3 + 3) / 4;
+    if (normWords.size() < minimumSnapshotWords) return false;
+
+    const size_t transcriptEnd = m_words.size();
+    const size_t recentSpan =
+        std::min(transcriptEnd, m_lastSnapshotWords + kMaxRevisedTailWords);
+    const size_t recentStart = transcriptEnd - recentSpan;
+    const size_t probeWords = std::min(normWords.size(), kBackwardProbeWords);
+
+    std::vector<size_t> candidates;
+    for (size_t snapshotOffset = 0;
+         snapshotOffset + kBackwardAnchorWords <= probeWords;
+         snapshotOffset += kBackwardAnchorWords) {
+        const size_t firstTranscriptOffset = recentStart + snapshotOffset;
+        if (firstTranscriptOffset + kBackwardAnchorWords > transcriptEnd) continue;
+
+        for (size_t transcriptOffset = firstTranscriptOffset;
+             transcriptOffset + kBackwardAnchorWords <= transcriptEnd;
+             ++transcriptOffset) {
+            bool anchorMatches = true;
+            for (size_t i = 0; i < kBackwardAnchorWords; ++i) {
+                if (m_words[transcriptOffset + i].norm != normWords[snapshotOffset + i]) {
+                    anchorMatches = false;
+                    break;
+                }
+            }
+            if (!anchorMatches) continue;
+
+            const size_t candidate = transcriptOffset - snapshotOffset;
+            if (std::find(candidates.begin(), candidates.end(), candidate) == candidates.end()) {
+                candidates.push_back(candidate);
+            }
+        }
+    }
+
+    bool found = false;
+    size_t acceptedStart = 0;
+    for (const size_t candidate : candidates) {
+        const size_t existingWords = transcriptEnd - candidate;
+
+        // The resurfaced snapshot must cover the current end, allowing only the
+        // same bounded recognition-tail rewrite used by the normal fast path.
+        if (normWords.size() + kMaxRevisedTailWords < existingWords) continue;
+
+        const size_t comparable = std::min(normWords.size(), existingWords);
+        size_t agreement = 0;
+        for (size_t i = 0; i < comparable; ++i) {
+            if (m_words[candidate + i].norm == normWords[i]) ++agreement;
+        }
+
+        const size_t requiredWords = std::min(comparable, kBackwardMinAgreementWords);
+        if (agreement < requiredWords || agreement * 2 < comparable) continue;
+
+        // More than one plausible alignment means the text really is
+        // repetitive. Preserve data by falling back to append in that case.
+        if (found && candidate != acceptedStart) return false;
+        found = true;
+        acceptedStart = candidate;
+    }
+
+    if (!found) return false;
+    *start = acceptedStart;
     return true;
 }
 

@@ -314,10 +314,20 @@ int main() {
     view.Present();
     Pump(40);
 
-    Down(view.Handle(), kGutterX, kLine0Y);
-    Up(view.Handle(), kGutterX, kLine0Y);
-    CheckText(view.SelectedText(), lines[0] + L"\r\n",
-              "gutter click selects the whole line including its break");
+    Down(view.Handle(), kGutterX, kLine2Y);
+    Up(view.Handle(), kGutterX, kLine2Y);
+    const std::wstring tailFromLine2 = lines[2] + L"\r\n" + lines[3];
+    CheckText(view.SelectedText(), tailFromLine2,
+              "gutter click selects from the clicked line through the transcript end");
+
+    const std::wstring appendedCaption = L"A new caption after the gutter click.";
+    view.QueueUpdate(lines.size(), {appendedCaption});
+    view.Present();
+    CheckText(view.SelectedText(), tailFromLine2 + L"\r\n" + appendedCaption,
+              "gutter tail selection grows with new caption text");
+
+    view.QueueUpdate(0, lines);
+    view.Present();
 
     Down(view.Handle(), kGutterX, kLine0Y);
     Move(view.Handle(), kGutterX, kLine2Y);
@@ -358,8 +368,8 @@ int main() {
 
     g_lastCommand = 0;
     DoubleClick(view.Handle(), kGutterX, kLine0Y);
-    Check(g_lastCommand != IDC_BTN_SEND && view.HasSelection(),
-          "double-click in the gutter selects a line rather than sending");
+    Check(g_lastCommand != IDC_BTN_SEND && view.SelectedText() == Joined(lines),
+          "double-click in the gutter selects the transcript tail rather than sending");
 
     // --- Trimming ----------------------------------------------------------
     // The pane keeps a bounded number of lines; a selection anchored at the top

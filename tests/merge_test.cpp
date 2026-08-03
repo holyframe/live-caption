@@ -220,6 +220,50 @@ void TestOnlyTailIsDirtied() {
     std::printf("   lines=%zu firstDirtyLine=%zu\n", merger.Lines().size(), update.firstDirtyLine);
 }
 
+// --- Test 10b: a full UIA buffer can jump backwards ------------------------
+// Windows Live Captions sometimes resurfaces the same document range with a
+// sizeable recognition revision. There is no suffix-to-prefix overlap in that
+// shape, but appending the buffer would duplicate the entire visible script.
+void TestBackwardSnapshotReplacesHistory() {
+    const auto numberedWords = [](const wchar_t* prefix, int count) {
+        std::wstring out;
+        for (int i = 0; i < count; ++i) {
+            if (!out.empty()) out.push_back(L' ');
+            out += prefix;
+            out += std::to_wstring(i);
+        }
+        return out;
+    };
+
+    const std::wstring shared = numberedWords(L"shared", 24);
+    const std::wstring original = shared + L" " + numberedWords(L"original", 16);
+    const std::wstring revised = shared + L" " + numberedWords(L"revised", 20);
+
+    CaptionMerger merger;
+    merger.Ingest(original);
+    merger.Ingest(revised);
+
+    Check(MergerText(merger) == revised,
+          "backward full-buffer revision replaces history instead of duplicating it");
+}
+
+// A short hard cut that repeats an older phrase is genuine new input. It must
+// still append, which guards the data-loss case the old Python merger had.
+void TestShortRepeatedBufferStillAppends() {
+    const std::wstring repeated =
+        L"one two three four five six seven eight nine ten eleven twelve";
+    const std::wstring bridge =
+        L"alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu "
+        L"nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+
+    CaptionMerger merger;
+    merger.Ingest(repeated + L" " + bridge);
+    merger.Ingest(repeated);
+
+    Check(MergerText(merger) == repeated + L" " + bridge + L" " + repeated,
+          "short repeated buffer remains genuine appended speech");
+}
+
 // --- Test 11: per-update cost must not scale with buffer size ---------------
 // Windows 11 Live captions resends its whole scrollback on every read. If the
 // merger reprocesses all of it each time, latency grows with session length.
@@ -294,6 +338,8 @@ int main() {
     TestNumericSentenceEnds();
     TestNonScrollingSourceBecomesStable();
     TestOnlyTailIsDirtied();
+    TestBackwardSnapshotReplacesHistory();
+    TestShortRepeatedBufferStillAppends();
     TestUpdateCostIsIndependentOfBufferSize();
 
     std::printf("\n%s\n", g_failures == 0 ? "All checks passed." : "SOME CHECKS FAILED.");

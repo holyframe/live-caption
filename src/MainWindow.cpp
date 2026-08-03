@@ -1372,6 +1372,10 @@ void MainWindow::OnSend() {
         return;
     }
 
+    // A successful send completes the sticky tail selection. Failed sends keep
+    // it intact so the user can retry without selecting the text again.
+    m_view.ClearSelection();
+
     std::wstring status = pressEnter ? L"Sent selection to " : L"Inserted selection in ";
     status += m_webInputPicker.SelectedName();
     status += pressEnter ? L" and pressed Enter." : L".";

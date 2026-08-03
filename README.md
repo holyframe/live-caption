@@ -73,7 +73,7 @@ selection is implemented directly on it:
 | Drag | Selects across lines. Dragging past the top or bottom edge scrolls. |
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
-| Left gutter (75px) | Click or drag to select whole lines, including their line breaks. Arrow cursor; the row under the pointer lights up. |
+| Left gutter (75px) | Click a row to select from that line through the end of the transcript. The selection keeps growing with new captions until it is cleared or sent. Drag to select a fixed range of whole lines. Arrow cursor; the row under the pointer lights up. |
 | Right panel (45px) | Full-height strip with Pick window and the selected target icon at the top, plus listening, Save, Clear, and Settings controls at the bottom. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |

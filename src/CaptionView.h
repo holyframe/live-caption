@@ -106,6 +106,7 @@ private:
     void  GrowSelectionEndIfNeeded(bool wasAtEnd);
     void  MoveSelectionTo(const TextPos& caret, bool keepAnchor);
     void  SelectWordAt(const TextPos& position);
+    void  SelectLineThroughEnd(size_t absoluteLine);
     void  SelectLinesTo(size_t absoluteLine, bool keepAnchor);
     void  DrawLineSelection(size_t index, float originX, float y, const TextPos& start,
                             const TextPos& end);
