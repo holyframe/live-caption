@@ -11,11 +11,27 @@ enum class WebInputPickState {
     NoWebDocument,
     NoEditableInput,
     Valid,
+    Checking,
+    // The window is a browser but exposes no accessible page. The pick point is
+    // remembered instead, and Send clicks it before typing.
+    ValidByPoint,
+    // Browser without an accessible page, pointed at its toolbar or tab strip
+    // rather than at the page itself.
+    NoWebContent,
 };
+
+inline bool IsPickableState(WebInputPickState state) {
+    return state == WebInputPickState::Valid || state == WebInputPickState::ValidByPoint;
+}
 
 // Resolves a browser/WebView tab and one of its editable fields through
 // Windows UI Automation. The selected document and input element are retained
 // so later features (such as Send) can use the exact tab that was picked.
+// Browsers whose renderer accessibility is switched off expose no page at all;
+// for those, the pick point inside the page viewport is retained instead and
+// Send clicks it to place the caret before typing.
+// Public methods are called by the UI thread. UIA objects and all their calls
+// live exclusively on a dedicated, windowless COM MTA worker.
 class WebInputPicker {
 public:
     WebInputPicker();
@@ -24,8 +40,14 @@ public:
     WebInputPicker(const WebInputPicker&) = delete;
     WebInputPicker& operator=(const WebInputPicker&) = delete;
 
-    WebInputPickState Inspect(POINT screenPoint, HWND ownWindow);
+    // Non-blocking, window-wide hover preview. Poll while dragging; obsolete
+    // requests/results are discarded. This never authorizes a commit.
+    WebInputPickState Preview(POINT screenPoint, HWND ownWindow);
+    // Synchronous validation. A drop must force a fresh, point-specific check.
+    WebInputPickState Inspect(POINT screenPoint, HWND ownWindow, bool forceRefresh = false);
+    // Cancellation clears the UI snapshot immediately; COM cleanup is queued.
     void ResetCandidate();
+    // Only the most recent successful forced Inspect may be committed.
     bool CommitCandidate();
 
     bool CandidateValid() const;
@@ -34,6 +56,9 @@ public:
 
     HWND SelectedWindow() const;
     const std::wstring& SelectedName() const;
+    // True when the retained target has no accessible input and Send must click
+    // the remembered page point to focus it.
+    bool SelectedClicksPoint() const;
     void ClearSelected();
 
     // Re-activates the retained browser tab, focuses its editable field, and
@@ -42,6 +67,9 @@ public:
     bool SendText(const std::wstring& text, bool pressEnter, std::wstring& error);
 
 private:
+#ifdef WEBINPUT_PICKER_TESTING
+    friend struct WebInputPickerTestAccess;
+#endif
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };

@@ -72,5 +72,42 @@ if errorlevel 1 (
 echo.
 build\caption_save_test.exe
 set "RESULT=%ERRORLEVEL%"
+if not "%RESULT%"=="0" (
+    popd
+    exit /b %RESULT%
+)
+
+echo.
+cl /nologo /std:c++20 /W4 /permissive- /utf-8 /EHsc /MT /O2 ^
+   /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
+   /I src tests\picker_validation_test.cpp ^
+   /Fo"%OBJDIR%\\" /Fe"build\picker_validation_test.exe"
+if errorlevel 1 (
+    popd
+    exit /b 1
+)
+
+echo.
+build\picker_validation_test.exe
+set "RESULT=%ERRORLEVEL%"
+if not "%RESULT%"=="0" (
+    popd
+    exit /b %RESULT%
+)
+
+echo.
+cl /nologo /std:c++20 /W4 /permissive- /utf-8 /EHsc /MT /O2 ^
+   /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
+   /I src tests\picker_async_test.cpp ^
+   /Fo"%OBJDIR%\\" /Fe"build\picker_async_test.exe" ^
+   /link user32.lib ole32.lib oleaut32.lib uuid.lib dwmapi.lib
+if errorlevel 1 (
+    popd
+    exit /b 1
+)
+
+echo.
+build\picker_async_test.exe
+set "RESULT=%ERRORLEVEL%"
 popd
 exit /b %RESULT%

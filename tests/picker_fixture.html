@@ -1,0 +1,59 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Picker test fixture</title>
+<style>
+  body { font: 18px sans-serif; margin: 40px; }
+  textarea, input, [contenteditable] { width: 80%; min-height: 80px; border: 1px solid #777; }
+  /* The "fill" case covers the viewport so any point inside the page area is
+     inside the input. Tests that cannot read the page can then click blind. */
+  #fixture.fill { position: fixed; inset: 0; margin: 0; }
+  #fixture.fill textarea { width: 100%; height: 100%; box-sizing: border-box; }
+</style>
+<h1>Local picker test — no messages are sent</h1>
+<main id="fixture"></main>
+<script>
+const scenario = new URLSearchParams(location.search).get('case') || 'delayed';
+const base = 'Picker test fixture ' + scenario;
+document.title = base;
+const host = document.getElementById('fixture');
+
+// Browsers launched with --disable-renderer-accessibility expose no page at
+// all, so tests observe typed text through the window title instead.
+let enters = 0;
+let focused = 0;
+let text = '';
+function report(value) {
+    if (value !== undefined) text = (value || '').replace(/\s+/g, ' ').trim();
+    document.title = base + ' |' + (text ? ' ' + text : '') +
+        ' [focus=' + focused + '] [enter=' + enters + ']';
+}
+host.addEventListener('focusin', () => { ++focused; report(); });
+host.addEventListener('input', event => report(event.target.value ?? event.target.textContent));
+host.addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return;
+    ++enters;
+    // Chat composers submit on Enter rather than inserting a newline.
+    event.preventDefault();
+    report(event.target.value ?? event.target.textContent);
+});
+report();
+
+function addInput() {
+    const field = document.createElement(scenario === 'password' ? 'input' : 'textarea');
+    field.setAttribute('aria-label', 'Chat message');
+    if (scenario === 'readonly') field.readOnly = true;
+    if (scenario === 'disabled') field.disabled = true;
+    if (scenario === 'password') field.type = 'password';
+    host.append(field);
+}
+if (scenario === 'rich') {
+    host.innerHTML = '<div contenteditable="true" role="textbox" aria-label="Chat message"></div>';
+} else if (scenario === 'delayed') {
+    setTimeout(addInput, 2500);
+} else if (scenario === 'fill') {
+    host.classList.add('fill');
+    addInput();
+} else if (scenario !== 'empty') {
+    addInput();
+}
+</script>

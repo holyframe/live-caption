@@ -91,11 +91,13 @@ highlighted pane in `build\`.
 ### Picking a web input tab
 
 Drag the Pick window button from the top of the right panel onto a browser or
-WebView window. A crosshair means the active web tab contains an enabled,
-focusable editable field and can be selected; the no-drop cursor means it
-cannot. A valid target is also surrounded by a click-through red outline.
-Releasing on it remembers that exact UI Automation document and input element,
-and displays the target window's icon in a separate tile beneath the picker.
+WebView window. A crosshair means the active web tab can be selected; the
+no-drop cursor means it cannot. A valid target is also surrounded by a
+click-through red outline. Releasing on it remembers that exact UI Automation
+document and input element, and displays the target window's icon in a separate
+tile beneath the picker. Browsers that hide their page from accessibility tools
+are picked by remembering the drop point instead, so release directly on the
+message box for those; see below.
 Click Send after selecting text in the caption pane. The app reactivates the
 retained browser tab, focuses its chat input, and replaces the input contents
 with the selection. When Press Enter is checked it then submits with Enter;
@@ -106,9 +108,80 @@ To forget a picked target, right-drag its separate icon tile outside the app
 window and release. Releasing inside cancels; releasing outside removes the
 retained window, tab, input element, accessible label, and icon.
 
-Only web inputs exposed beneath a UI Automation `Document` are accepted.
+When the page is accessible, only web inputs exposed beneath a UI Automation
+`Document` are accepted.
+Rich-text composers exposed as writable Documents or custom text controls are
+also supported, including when the document is itself the editor. The picker
+rechecks the browser while the pointer is stationary, since browsers can expose
+their accessibility tree after the first query, and always checks again on drop.
+Browser automation runs on a dedicated windowless COM MTA thread, keeping its
+interfaces out of the caption window's STA and releasing them on their owner
+thread. Only target names, window handles and result states return to the UI.
+Hover checks are non-blocking: at most one scan runs and one latest request is
+queued. Moving to another window or cancelling discards outdated results.
+Completed previews are reused for 750 ms without further accessibility calls;
+the drag UI polls for completed work every 50 ms. Releasing performs a fresh,
+point-specific check and retains the browser tab before allowing a commit.
+That final check may still wait for an in-flight browser accessibility call.
 Ordinary desktop edit controls, browser address bars, disabled or read-only
 fields, password fields, and tabs with no visible editable input are rejected.
+
+If the status says no accessible page was found, bring the intended chat tab
+forward, dismiss any browser settings/dialog overlay, click its message box,
+and retry the drag. Picking uses the active visible page, not an inactive tab
+in the browser's tab strip. Browsers that expose no page at all are handled by
+the click fallback described below.
+
+#### Browsers that hide their page from accessibility tools
+
+Some Chromium builds are launched with `--disable-renderer-accessibility`,
+which stops the browser from exposing the page at all. Privacy and
+anti-fingerprinting browsers (ixBrowser, for example) set it on every profile,
+and `--force-renderer-accessibility` does **not** override it; see
+[Chromium's accessibility switches](https://chromium.googlesource.com/chromium/src/+/HEAD/ui/accessibility/accessibility_switches.cc).
+No amount of waiting or retrying can find an input in such a window, so the
+picker switches to the point you dropped on.
+
+For those targets the app remembers the drop point inside the page area rather
+than an input element, and Send clicks that point to place the caret before
+typing. The pointer is put back where you left it. Because the point is stored
+relative to the nearest edges of the page viewport, moving the window, and
+resizing it around a composer anchored to the bottom of the page, both keep the
+target valid. The status bar says so when such a target is picked, and picking
+is otherwise unchanged.
+
+This mode aims at bare screen coordinates, so it is deliberately restricted.
+Only known browser windows qualify: an ordinary application that exposes no
+accessible input is still refused rather than clicked blindly. Drops on the tab
+strip or address bar are refused too, since typing a caption there would
+navigate. Before each send the app confirms that the picked window still owns
+that point and became foreground, and refuses if anything covers the browser.
+Keep the chat input visible at the picked spot; unlike the accessibility path,
+the app cannot see what is actually there.
+
+#### Picker tests
+
+`tests\run_tests.bat` includes picker validation, retry-cache, viewport-anchor,
+and deterministic slow-provider/coalescing/cancellation regression tests.
+For read-only diagnostics, `tests\picker_probe.bat <decimal HWND>` reports
+control types and editability flags without reading page text or input values.
+`tests\picker_browser_test.ps1` optionally exercises delayed and rich inputs,
+rejection cases, fresh drops, and target cleanup in an isolated Chrome profile
+against a local test page; it does not send any messages.
+`tests\picker_noax_test.ps1` covers the click fallback by running Chrome with
+`--disable-renderer-accessibility`: it checks that no document is exposed, that
+the toolbar is refused, and that a caption plus Enter reaches the page input
+without navigating. The local fixture mirrors what it receives into its window
+title, which is how the test observes a page it cannot read.
+`tests\picker_ui_test.ps1` additionally runs the real `LiveCaptionView.exe` in
+an isolated directory and exercises mouse capture, the red outline, drop,
+the separate selected icon, and right-drag removal. It briefly moves the mouse
+and opens local test windows, then restores the pointer and foreground window.
+Use `-BrowserPath <exe>` for a Chromium variant, `-ExePath <exe>` to test a
+build other than `build\LiveCaptionView.exe`, or `-DisableAccessibility` to
+exercise the click fallback through the real UI. The browser test scripts
+retain disposable profiles under `build/` for diagnostics; none of them use
+existing browser profiles.
 
 ### About the hotkey
 

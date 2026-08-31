@@ -60,7 +60,7 @@ private:
     void OnSettings();
     void OnPickWindow();
     void BeginWindowPick();
-    void UpdateWindowPick(POINT screenPoint);
+    void UpdateWindowPick(POINT screenPoint, bool forceRefresh = false);
     void FinishWindowPick(bool accept);
     void ShowWindowPickStatus(WebInputPickState state);
     void UpdatePickedWindowIcon(HWND window);
@@ -108,6 +108,7 @@ private:
 
     WebInputPicker m_webInputPicker;
     bool m_windowPickDrag = false;
+    bool m_windowPickUpdating = false;
     WebInputPickState m_windowPickState = WebInputPickState::NoWindow;
     bool m_selectedIconRemoveDrag = false;
     bool m_selectedIconOutside = false;

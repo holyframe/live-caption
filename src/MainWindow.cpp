@@ -66,6 +66,8 @@ constexpr COLORREF kLightSplitterLine  = RGB(205, 205, 205);
 constexpr ULONGLONG kRealtimeCopyIntervalMs = 600;
 constexpr UINT_PTR kHotkeySendTimerId = 0xCA51;
 constexpr UINT kHotkeySendPollMs = 10;
+constexpr UINT_PTR kWindowPickTimerId = 0xCA52;
+constexpr UINT kWindowPickPollMs = 50;
 
 int CALLBACK EnumFontProc(const LOGFONTW* logFont, const TEXTMETRICW*, DWORD, LPARAM param) {
     auto* names = reinterpret_cast<std::set<std::wstring>*>(param);
@@ -264,7 +266,8 @@ LRESULT CALLBACK MainWindow::PickButtonSubclassProc(HWND hwnd, UINT message, WPA
             if (self->m_windowPickDrag) {
                 POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
                 ::ClientToScreen(hwnd, &point);
-                self->UpdateWindowPick(point);
+                self->HidePickOutline();
+                self->UpdateWindowPick(point, true);
                 self->FinishWindowPick(true);
                 return 0;
             }
@@ -272,9 +275,8 @@ LRESULT CALLBACK MainWindow::PickButtonSubclassProc(HWND hwnd, UINT message, WPA
 
         case WM_SETCURSOR:
             if (self->m_windowPickDrag) {
-                const LPCWSTR cursor =
-                    self->m_windowPickState == WebInputPickState::Valid ? IDC_CROSS : IDC_NO;
-                ::SetCursor(::LoadCursorW(nullptr, cursor));
+                ::SetCursor(::LoadCursorW(
+                    nullptr, IsPickableState(self->m_windowPickState) ? IDC_CROSS : IDC_NO));
                 return TRUE;
             }
             break;
@@ -555,6 +557,17 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             break;
 
         case WM_TIMER:
+            if (wParam == kWindowPickTimerId) {
+                if (m_windowPickDrag && !m_windowPickUpdating) {
+                    POINT point{};
+                    if (::GetCapture() != m_pickWindowButton) {
+                        FinishWindowPick(false);
+                    } else if (::GetCursorPos(&point)) {
+                        UpdateWindowPick(point);
+                    }
+                }
+                return 0;
+            }
             if (wParam == kHotkeySendTimerId && m_hotkeySendPending) {
                 if (HotkeyChordReleased()) {
                     ::KillTimer(m_hwnd, kHotkeySendTimerId);
@@ -575,7 +588,9 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         case WM_APP_STATUS: {
             auto* text = reinterpret_cast<std::wstring*>(lParam);
             if (text) {
-                SetStatus(*text);
+                // Capture-source reconnect notices must not hide the reason
+                // a hovered browser target is being rejected.
+                if (!m_windowPickDrag) SetStatus(*text);
                 delete text;
             }
             return 0;
@@ -616,6 +631,7 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         }
 
         case WM_DESTROY:
+            ::KillTimer(m_hwnd, kWindowPickTimerId);
             if (m_hotkeySendPending) {
                 ::KillTimer(m_hwnd, kHotkeySendTimerId);
                 m_hotkeySendPending = false;
@@ -1504,23 +1520,37 @@ void MainWindow::OnPickWindow() {
 }
 
 void MainWindow::BeginWindowPick() {
-    if (m_windowPickDrag) return;
+    if (m_windowPickDrag || m_windowPickUpdating) return;
     HidePickOutline();
     m_webInputPicker.ResetCandidate();
     m_windowPickState = WebInputPickState::NoWindow;
     m_windowPickDrag = true;
     ::SendMessageW(m_pickWindowButton, BM_SETSTATE, TRUE, 0);
     ::SetCapture(m_pickWindowButton);
+    if (::GetCapture() != m_pickWindowButton) {
+        FinishWindowPick(false);
+        return;
+    }
+    ::SetTimer(m_hwnd, kWindowPickTimerId, kWindowPickPollMs, nullptr);
     ::SetCursor(::LoadCursorW(nullptr, IDC_NO));
     SetStatus(L"Drag over a browser tab. Release when the cursor changes to a crosshair.");
 }
 
-void MainWindow::UpdateWindowPick(POINT screenPoint) {
-    if (!m_windowPickDrag) return;
-    m_windowPickState = m_webInputPicker.Inspect(screenPoint, m_hwnd);
-    const LPCWSTR cursor = m_windowPickState == WebInputPickState::Valid ? IDC_CROSS : IDC_NO;
-    ::SetCursor(::LoadCursorW(nullptr, cursor));
-    if (m_windowPickState == WebInputPickState::Valid) {
+void MainWindow::UpdateWindowPick(POINT screenPoint, bool forceRefresh) {
+    if (!m_windowPickDrag || m_windowPickUpdating) return;
+    m_windowPickUpdating = true;
+    const auto state = forceRefresh ? m_webInputPicker.Inspect(screenPoint, m_hwnd, true)
+                                    : m_webInputPicker.Preview(screenPoint, m_hwnd);
+    m_windowPickUpdating = false;
+    // Never restore a preview after the drag has been cancelled.
+    if (!m_windowPickDrag) {
+        m_webInputPicker.ResetCandidate();
+        return;
+    }
+    m_windowPickState = state;
+    const bool pickable = IsPickableState(m_windowPickState);
+    ::SetCursor(::LoadCursorW(nullptr, pickable ? IDC_CROSS : IDC_NO));
+    if (pickable) {
         UpdatePickOutline(m_webInputPicker.CandidateWindow());
     } else {
         HidePickOutline();
@@ -1530,13 +1560,15 @@ void MainWindow::UpdateWindowPick(POINT screenPoint) {
 
 void MainWindow::FinishWindowPick(bool accept) {
     if (!m_windowPickDrag) return;
+    // Never commit a previous candidate if release reentered an ongoing query.
+    if (m_windowPickUpdating) accept = false;
     m_windowPickDrag = false;
+    ::KillTimer(m_hwnd, kWindowPickTimerId);
     HidePickOutline();
     if (::GetCapture() == m_pickWindowButton) ::ReleaseCapture();
     ::SendMessageW(m_pickWindowButton, BM_SETSTATE, FALSE, 0);
 
-    if (accept && m_windowPickState == WebInputPickState::Valid &&
-        m_webInputPicker.CommitCandidate()) {
+    if (accept && IsPickableState(m_windowPickState) && m_webInputPicker.CommitCandidate()) {
         UpdatePickedWindowIcon(m_webInputPicker.SelectedWindow());
         UpdateWindowTitle();
 
@@ -1548,7 +1580,10 @@ void MainWindow::FinishWindowPick(bool accept) {
 
         std::wstring status = L"Picked web tab: ";
         status += m_webInputPicker.SelectedName();
-        status += L".";
+        status += m_webInputPicker.SelectedClicksPoint()
+                     ? L". This browser hides its page from accessibility tools, so Send will "
+                       L"click the spot you picked before typing. Keep the input visible there."
+                     : L".";
         SetStatus(status);
     } else if (!accept) {
         SetStatus(L"Window picking cancelled.");
@@ -1556,11 +1591,16 @@ void MainWindow::FinishWindowPick(bool accept) {
         ShowWindowPickStatus(m_windowPickState);
     }
 
-    m_webInputPicker.ResetCandidate();
+    // Reset invalidates in-flight preview results immediately. UIA interfaces
+    // are released later on the worker that owns them.
+    if (!m_windowPickUpdating) m_webInputPicker.ResetCandidate();
 }
 
 void MainWindow::ShowWindowPickStatus(WebInputPickState state) {
     switch (state) {
+        case WebInputPickState::Checking:
+            SetStatus(L"Checking this window for an editable web input...");
+            return;
         case WebInputPickState::Valid: {
             std::wstring status = L"Release to pick: ";
             status += m_webInputPicker.CandidateName();
@@ -1568,14 +1608,27 @@ void MainWindow::ShowWindowPickStatus(WebInputPickState state) {
             SetStatus(status);
             return;
         }
+        case WebInputPickState::ValidByPoint: {
+            std::wstring status = L"Release on the message box to pick: ";
+            status += m_webInputPicker.CandidateName();
+            status += L". This browser hides its page, so the exact spot is used.";
+            SetStatus(status);
+            return;
+        }
         case WebInputPickState::OwnWindow:
             SetStatus(L"This app cannot be selected.");
             return;
+        case WebInputPickState::NoWebContent:
+            SetStatus(L"Drag onto the page itself, not the tab strip or address bar.");
+            return;
         case WebInputPickState::NoWebDocument:
-            SetStatus(L"Drop unavailable: this window does not expose a web tab.");
+            SetStatus(m_windowPickDrag
+                          ? L"Waiting for the browser's accessible page. Keep hovering over the tab."
+                          : L"No accessible web page. Open the chat tab in a browser window.");
             return;
         case WebInputPickState::NoEditableInput:
-            SetStatus(L"Drop unavailable: this web tab has no enabled editable input.");
+            SetStatus(L"Drop unavailable: no enabled editable web input. Open the chat tab "
+                      L"and drag onto its message box.");
             return;
         default:
             SetStatus(L"Drop unavailable: point at a visible browser or WebView window.");

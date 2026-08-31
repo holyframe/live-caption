@@ -1,4 +1,5 @@
 #include "WebInputPicker.h"
+#include "WebInputValidation.h"
 
 #include <dwmapi.h>
 #include <objbase.h>
@@ -7,8 +8,16 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <condition_variable>
 #include <cwctype>
+#include <deque>
+#include <functional>
+#include <future>
 #include <limits>
+#include <mutex>
+#include <optional>
+#include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -38,6 +47,69 @@ std::wstring WindowTitle(HWND hwnd) {
     const int copied = ::GetWindowTextW(hwnd, title.data(), length + 1);
     title.resize(static_cast<size_t>(std::max(copied, 0)));
     return title;
+}
+
+std::wstring WindowClass(HWND hwnd) {
+    wchar_t name[256]{};
+    const int copied = ::GetClassNameW(hwnd, name, static_cast<int>(std::size(name)));
+    return std::wstring(name, static_cast<size_t>(std::max(copied, 0)));
+}
+
+struct ContentFrameSearch {
+    POINT point{};
+    bool requirePoint = false;
+    bool sawContent = false;
+    RECT frame{};
+    long long area = 0;
+    bool found = false;
+};
+
+BOOL CALLBACK FindContentFrame(HWND child, LPARAM param) {
+    auto* search = reinterpret_cast<ContentFrameSearch*>(param);
+    if (!::IsWindowVisible(child) || !webinput::IsWebContentWindowClass(WindowClass(child))) {
+        return TRUE;
+    }
+    RECT bounds{};
+    if (!::GetWindowRect(child, &bounds) || ::IsRectEmpty(&bounds)) return TRUE;
+    search->sawContent = true;
+    if (search->requirePoint && !::PtInRect(&bounds, search->point)) return TRUE;
+
+    // Chromium keeps several render surfaces per window: besides the page there
+    // is one for the address bar dropdown and a placeholder a few pixels wide.
+    // They overlap, and enumeration order is z-order, so compare sizes instead
+    // of taking the first match. The page viewport is always the largest.
+    const long long area = static_cast<long long>(bounds.right - bounds.left) *
+                           static_cast<long long>(bounds.bottom - bounds.top);
+    if (!search->found || area > search->area) {
+        search->frame = bounds;
+        search->area = area;
+        search->found = true;
+    }
+    return TRUE;
+}
+
+// Locates the page viewport of a browser window. Chromium draws pages into a
+// dedicated child window, so its rectangle separates the page from the toolbar
+// and tab strip. Browsers without such a child fall back to the client area.
+bool WebContentFrame(HWND root, const POINT* requirePoint, RECT& frame) {
+    ContentFrameSearch search;
+    search.requirePoint = requirePoint != nullptr;
+    if (requirePoint) search.point = *requirePoint;
+    ::EnumChildWindows(root, &FindContentFrame, reinterpret_cast<LPARAM>(&search));
+    if (search.found) {
+        frame = search.frame;
+        return true;
+    }
+    // A page window exists but the caller's point is elsewhere in the browser.
+    if (search.sawContent) return false;
+
+    RECT client{};
+    if (!::GetClientRect(root, &client) || ::IsRectEmpty(&client)) return false;
+    POINT topLeft{client.left, client.top};
+    POINT bottomRight{client.right, client.bottom};
+    if (!::ClientToScreen(root, &topLeft) || !::ClientToScreen(root, &bottomRight)) return false;
+    frame = RECT{topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
+    return !requirePoint || ::PtInRect(&frame, *requirePoint) != FALSE;
 }
 
 std::wstring ToLower(std::wstring text) {
@@ -94,6 +166,28 @@ bool PointInside(const RECT& rect, POINT point) {
     return ::PtInRect(&rect, point) != FALSE;
 }
 
+// Native hit testing stays on the UI thread too, so leaving a target removes
+// its outline immediately even when its accessibility provider is busy.
+WebInputPickState PickWindowAt(POINT point, HWND ownWindow, HWND& root) {
+    const HWND hit = ::WindowFromPoint(point);
+    root = hit ? ::GetAncestor(hit, GA_ROOT) : nullptr;
+    if (!root || !::IsWindow(root) || !::IsWindowVisible(root) || ::IsIconic(root)) {
+        return WebInputPickState::NoWindow;
+    }
+    DWORD ownPid = 0, targetPid = 0;
+    ::GetWindowThreadProcessId(ownWindow, &ownPid);
+    ::GetWindowThreadProcessId(root, &targetPid);
+    if (root == ownWindow || (ownPid != 0 && targetPid == ownPid)) {
+        return WebInputPickState::OwnWindow;
+    }
+    DWORD cloaked = 0;
+    if (SUCCEEDED(::DwmGetWindowAttribute(root, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
+        cloaked != 0) {
+        return WebInputPickState::NoWindow;
+    }
+    return WebInputPickState::Checking;
+}
+
 bool IsUsableWebEdit(IUIAutomationElement* element) {
     if (!element) return false;
 
@@ -102,7 +196,7 @@ bool IsUsableWebEdit(IUIAutomationElement* element) {
     BOOL focusable = FALSE;
     BOOL offscreen = TRUE;
     BOOL password = TRUE;
-    if (FAILED(element->get_CurrentControlType(&type)) || type != UIA_EditControlTypeId ||
+    if (FAILED(element->get_CurrentControlType(&type)) ||
         FAILED(element->get_CurrentIsEnabled(&enabled)) || !enabled ||
         FAILED(element->get_CurrentIsKeyboardFocusable(&focusable)) || !focusable ||
         FAILED(element->get_CurrentIsOffscreen(&offscreen)) || offscreen ||
@@ -110,20 +204,47 @@ bool IsUsableWebEdit(IUIAutomationElement* element) {
         return false;
     }
 
+    webinput::InputCapabilities capabilities;
+    capabilities.type = type;
+    capabilities.enabled = enabled != FALSE;
+    capabilities.focusable = focusable != FALSE;
+    capabilities.offscreen = offscreen != FALSE;
+    capabilities.password = password != FALSE;
+
     // A writable ValuePattern is the usual HTML input/textarea shape.
     ComPtr<IUnknown> unknown;
     if (SUCCEEDED(element->GetCurrentPattern(UIA_ValuePatternId, &unknown)) && unknown) {
         ComPtr<IUIAutomationValuePattern> valuePattern;
         if (SUCCEEDED(unknown.As(&valuePattern)) && valuePattern) {
             BOOL readOnly = TRUE;
-            if (SUCCEEDED(valuePattern->get_CurrentIsReadOnly(&readOnly)) && !readOnly) return true;
+            if (SUCCEEDED(valuePattern->get_CurrentIsReadOnly(&readOnly))) {
+                capabilities.value = readOnly ? webinput::WriteAccess::ReadOnly
+                                              : webinput::WriteAccess::Writable;
+                return webinput::CanEdit(capabilities);
+            }
         }
     }
 
-    // Chromium exposes some contenteditable elements as Edit + TextPattern
-    // instead of ValuePattern.
+    // Rich web editors can be Documents rather than Edits. TextPattern itself
+    // is not proof of editability: ask for its explicit read-only attribute.
+    // https://learn.microsoft.com/windows/win32/winauto/uiauto-textattribute-ids
     unknown.Reset();
-    return SUCCEEDED(element->GetCurrentPattern(UIA_TextPatternId, &unknown)) && unknown;
+    if (SUCCEEDED(element->GetCurrentPattern(UIA_TextPatternId, &unknown)) && unknown) {
+        ComPtr<IUIAutomationTextPattern> text;
+        ComPtr<IUIAutomationTextRange> range;
+        if (SUCCEEDED(unknown.As(&text)) && text &&
+            SUCCEEDED(text->get_DocumentRange(&range)) && range) {
+            VARIANT readOnly{};
+            if (SUCCEEDED(range->GetAttributeValue(UIA_IsReadOnlyAttributeId, &readOnly)) &&
+                readOnly.vt == VT_BOOL) {
+                capabilities.text = readOnly.boolVal == VARIANT_FALSE
+                                        ? webinput::WriteAccess::Writable
+                                        : webinput::WriteAccess::ReadOnly;
+            }
+            ::VariantClear(&readOnly);
+        }
+    }
+    return webinput::CanEdit(capabilities);
 }
 
 void AddVirtualKey(std::vector<INPUT>& events, WORD key, bool keyUp = false) {
@@ -185,15 +306,68 @@ bool InjectEnter() {
     return InjectEvents(events);
 }
 
+// Chromium needs a moment to route the click to the page and settle focus
+// there before typed characters arrive.
+constexpr DWORD kClickSettleMs = 40;
+
+// Absolute pointer moves are expressed in a 0..65535 square spanning the whole
+// virtual desktop. https://learn.microsoft.com/windows/win32/api/winuser/ns-winuser-mouseinput
+bool AddAbsoluteMove(std::vector<INPUT>& events, POINT point) {
+    const int left = ::GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int top = ::GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int width = ::GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    const int height = ::GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (width <= 1 || height <= 1) return false;
+
+    INPUT move{};
+    move.type = INPUT_MOUSE;
+    move.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    move.mi.dx = ::MulDiv(point.x - left, 65535, width - 1);
+    move.mi.dy = ::MulDiv(point.y - top, 65535, height - 1);
+    events.push_back(move);
+    return true;
+}
+
+// Places the caret by clicking, for pages that expose no accessible input.
+// The pointer is returned to where the user left it.
+bool ClickScreenPoint(POINT point) {
+    POINT original{};
+    const bool restore = ::GetCursorPos(&original) != FALSE;
+
+    // The move and the button travel as one batch, so a hand on the mouse
+    // cannot slip between them and drag the click onto another window.
+    std::vector<INPUT> events;
+    events.reserve(3);
+    if (!AddAbsoluteMove(events, point)) return false;
+    INPUT button{};
+    button.type = INPUT_MOUSE;
+    button.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    events.push_back(button);
+    button.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    events.push_back(button);
+    if (!InjectEvents(events)) return false;
+
+    ::Sleep(kClickSettleMs);
+    if (restore) {
+        events.clear();
+        if (AddAbsoluteMove(events, original)) InjectEvents(events);
+    }
+    return true;
+}
+
 }  // namespace
 
-struct WebInputPicker::Impl {
+struct PickerAutomation {
     struct Target {
         HWND hwnd = nullptr;
         std::wstring name;
         ComPtr<IUIAutomationElement> document;
         ComPtr<IUIAutomationElement> input;
         ComPtr<IUIAutomationElement> browserTab;
+        // Set when the page exposes no accessibility tree and the caret has to
+        // be placed by clicking the remembered viewport point instead.
+        bool clicksPoint = false;
+        webinput::PickAnchor anchor;
 
         void Reset() {
             hwnd = nullptr;
@@ -201,6 +375,8 @@ struct WebInputPicker::Impl {
             document.Reset();
             input.Reset();
             browserTab.Reset();
+            clicksPoint = false;
+            anchor = {};
         }
     };
 
@@ -211,6 +387,11 @@ struct WebInputPicker::Impl {
         if (FAILED(hr)) {
             hr = ::CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
                                     IID_PPV_ARGS(&automation));
+        }
+        ComPtr<IUIAutomation2> automation2;
+        if (automation && SUCCEEDED(automation.As(&automation2))) {
+            automation2->put_ConnectionTimeout(1000);
+            automation2->put_TransactionTimeout(1000);
         }
         return SUCCEEDED(hr) && automation;
     }
@@ -303,7 +484,6 @@ struct WebInputPicker::Impl {
                 if (SUCCEEDED(automation->CompareElements(current.Get(), document, &same)) && same) {
                     return edit;
                 }
-                return nullptr;
             }
 
             ComPtr<IUIAutomationElement> parent;
@@ -354,8 +534,23 @@ struct WebInputPicker::Impl {
             if (pointed) return pointed;
         }
 
-        auto edit = PropertyCondition(automation.Get(), UIA_ControlTypePropertyId, VT_I4,
-                                      UIA_EditControlTypeId);
+        const CONTROLTYPEID types[] = {UIA_EditControlTypeId, UIA_DocumentControlTypeId,
+                                       UIA_CustomControlTypeId, UIA_PaneControlTypeId,
+                                       UIA_GroupControlTypeId};
+        std::vector<ComPtr<IUIAutomationCondition>> conditions;
+        std::vector<IUIAutomationCondition*> rawConditions;
+        for (CONTROLTYPEID type : types) {
+            auto condition = PropertyCondition(automation.Get(), UIA_ControlTypePropertyId,
+                                                VT_I4, type);
+            if (!condition) return nullptr;
+            rawConditions.push_back(condition.Get());
+            conditions.push_back(std::move(condition));
+        }
+        ComPtr<IUIAutomationCondition> edit;
+        if (FAILED(automation->CreateOrConditionFromNativeArray(
+                rawConditions.data(), static_cast<int>(rawConditions.size()), &edit))) {
+            return nullptr;
+        }
         auto enabled =
             PropertyCondition(automation.Get(), UIA_IsEnabledPropertyId, VT_BOOL, TRUE);
         auto focusable =
@@ -368,7 +563,7 @@ struct WebInputPicker::Impl {
         if (!usableEdit) return nullptr;
 
         ComPtr<IUIAutomationElementArray> inputs;
-        if (FAILED(document->FindAll(TreeScope_Descendants, usableEdit.Get(), &inputs)) || !inputs) {
+        if (FAILED(document->FindAll(TreeScope_Subtree, usableEdit.Get(), &inputs)) || !inputs) {
             return nullptr;
         }
 
@@ -420,51 +615,34 @@ struct WebInputPicker::Impl {
         return nullptr;
     }
 
-    WebInputPickState Inspect(POINT point, HWND ownWindow) {
-        HWND hit = ::WindowFromPoint(point);
-        HWND root = hit ? ::GetAncestor(hit, GA_ROOT) : nullptr;
-        if (!root || !::IsWindow(root) || !::IsWindowVisible(root) || ::IsIconic(root)) {
+    WebInputPickState Inspect(POINT point, HWND ownWindow, bool forceRefresh) {
+        HWND root = nullptr;
+        const auto hitState = PickWindowAt(point, ownWindow, root);
+        if (hitState != WebInputPickState::Checking) {
             candidate.Reset();
             lastWindow = nullptr;
-            lastState = WebInputPickState::NoWindow;
+            lastState = hitState;
             return lastState;
         }
 
-        DWORD ownPid = 0;
-        DWORD targetPid = 0;
-        ::GetWindowThreadProcessId(ownWindow, &ownPid);
-        ::GetWindowThreadProcessId(root, &targetPid);
-        if (root == ownWindow || (ownPid != 0 && targetPid == ownPid)) {
-            candidate.Reset();
-            lastWindow = root;
-            lastState = WebInputPickState::OwnWindow;
-            return lastState;
-        }
-
-        DWORD cloaked = 0;
-        if (SUCCEEDED(::DwmGetWindowAttribute(root, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
-            cloaked != 0) {
-            candidate.Reset();
-            lastWindow = root;
-            lastState = WebInputPickState::NoWindow;
-            return lastState;
-        }
-
-        // UI Automation tree walks are cross-process calls. Reuse the result
-        // while the pointer remains over the same top-level window. A cheap
-        // point walk still lets the user disambiguate pages with several
-        // fields by releasing directly over the intended chat composer.
-        if (root == lastWindow) {
-            if (lastState == WebInputPickState::Valid && candidate.document) {
-                ComPtr<IUIAutomationElement> pointed =
-                    InputFromPoint(candidate.document.Get(), point);
-                if (pointed) candidate.input = std::move(pointed);
-            }
+        // Chromium can populate its accessibility tree after the first query.
+        // Never cache a negative result for the whole drag. Valid results also
+        // expire so tab switches/navigation in the same HWND are rechecked.
+        const ULONGLONG now = ::GetTickCount64();
+        if (webinput::CanReuseInspection(root, lastWindow, now, lastInspectionTick, forceRefresh)) {
+            // Hover is window-wide. Resolve the precise field on drop instead
+            // of walking the browser tree on every cached mouse movement.
             return lastState;
         }
         candidate.Reset();
         lastWindow = root;
+        lastState = InspectWindow(root, point, forceRefresh);
+        // A slow provider must not consume the cache lifetime during the scan.
+        lastInspectionTick = ::GetTickCount64();
+        return lastState;
+    }
 
+    WebInputPickState InspectWindow(HWND root, POINT point, bool retainTab) {
         if (!EnsureAutomation()) {
             lastState = WebInputPickState::NoWebDocument;
             return lastState;
@@ -478,8 +656,7 @@ struct WebInputPicker::Impl {
 
         ComPtr<IUIAutomationElement> document = VisibleDocument(rootElement.Get(), point);
         if (!document) {
-            lastState = WebInputPickState::NoWebDocument;
-            return lastState;
+            return InspectWithoutAccessiblePage(root, rootElement.Get(), point, retainTab);
         }
 
         ComPtr<IUIAutomationElement> input = EditableInput(document.Get(), &point);
@@ -491,11 +668,41 @@ struct WebInputPicker::Impl {
         candidate.hwnd = root;
         candidate.document = std::move(document);
         candidate.input = std::move(input);
-        candidate.browserTab = SelectedBrowserTab(rootElement.Get());
+        // Tab enumeration is needed only for the final retained target.
+        if (retainTab) candidate.browserTab = SelectedBrowserTab(rootElement.Get());
         candidate.name = ElementName(candidate.document.Get());
         if (candidate.name.empty()) candidate.name = WindowTitle(root);
         if (candidate.name.empty()) candidate.name = L"web tab";
         lastState = WebInputPickState::Valid;
+        return lastState;
+    }
+
+    // Browsers started with --disable-renderer-accessibility (several privacy
+    // and anti-fingerprinting builds do this) never expose a page, so no input
+    // element can be found however long we wait. Remember where the user
+    // pointed inside the page instead; Send clicks there to place the caret.
+    WebInputPickState InspectWithoutAccessiblePage(HWND root, IUIAutomationElement* rootElement,
+                                                   POINT point, bool retainTab) {
+        if (!webinput::IsBrowserWindowClass(WindowClass(root))) {
+            lastState = WebInputPickState::NoWebDocument;
+            return lastState;
+        }
+
+        RECT frame{};
+        if (!WebContentFrame(root, &point, frame)) {
+            // Typing into the address bar would navigate, so refuse anything
+            // outside the page area.
+            lastState = WebInputPickState::NoWebContent;
+            return lastState;
+        }
+
+        candidate.hwnd = root;
+        candidate.clicksPoint = true;
+        candidate.anchor = webinput::MakePickAnchor(frame, point);
+        if (retainTab) candidate.browserTab = SelectedBrowserTab(rootElement);
+        candidate.name = WindowTitle(root);
+        if (candidate.name.empty()) candidate.name = L"web tab";
+        lastState = WebInputPickState::ValidByPoint;
         return lastState;
     }
 
@@ -523,6 +730,41 @@ struct WebInputPicker::Impl {
         return true;
     }
 
+    bool SelectedIsForeground(std::wstring& error) {
+        const HWND foreground = ::GetForegroundWindow();
+        if (foreground == selected.hwnd || ::GetAncestor(foreground, GA_ROOT) == selected.hwnd) {
+            return true;
+        }
+        error = L"Windows would not activate the picked window. Bring it forward and try again.";
+        return false;
+    }
+
+    bool ClickSelectedPoint(std::wstring& error) {
+        RECT frame{};
+        if (!WebContentFrame(selected.hwnd, nullptr, frame)) {
+            error = L"The picked browser no longer shows a page area. Pick the tab again.";
+            return false;
+        }
+
+        const POINT target = webinput::ResolvePickAnchor(frame, selected.anchor);
+        // This click is aimed at bare screen coordinates, so anything covering
+        // the browser would receive the caption instead of the chat input.
+        const HWND hit = ::WindowFromPoint(target);
+        if (!hit || ::GetAncestor(hit, GA_ROOT) != selected.hwnd) {
+            error = L"Another window is covering the picked input. Uncover the browser and try "
+                    L"again.";
+            return false;
+        }
+        if (!ClickScreenPoint(target)) {
+            error = L"Windows could not click the picked input. An elevated target may require "
+                    L"this app to run as administrator.";
+            return false;
+        }
+        // Clicking the page activates the browser even when this app is not
+        // allowed to raise it, but confirm before releasing any keystrokes.
+        return SelectedIsForeground(error);
+    }
+
     bool FocusSelectedInput(std::wstring& error) {
         if (!selected.hwnd || !::IsWindow(selected.hwnd)) {
             error = L"The picked window has closed. Pick a web tab again.";
@@ -536,11 +778,9 @@ struct WebInputPicker::Impl {
 
         if (::IsIconic(selected.hwnd)) ::ShowWindow(selected.hwnd, SW_RESTORE);
         ::SetForegroundWindow(selected.hwnd);
-        HWND foreground = ::GetForegroundWindow();
-        if (foreground != selected.hwnd && ::GetAncestor(foreground, GA_ROOT) != selected.hwnd) {
-            error = L"Windows would not activate the picked window. Bring it forward and try again.";
-            return false;
-        }
+
+        if (selected.clicksPoint) return ClickSelectedPoint(error);
+        if (!SelectedIsForeground(error)) return false;
 
         // First try the exact input retained at pick time. If the browser
         // recreated its accessibility tree while switching tabs, resolve the
@@ -579,7 +819,7 @@ struct WebInputPicker::Impl {
             error = L"The selected caption text is empty.";
             return false;
         }
-        if (!selected.hwnd || !selected.input) {
+        if (!selected.hwnd || (!selected.input && !selected.clicksPoint)) {
             error = L"Pick a web tab before sending.";
             return false;
         }
@@ -587,7 +827,8 @@ struct WebInputPicker::Impl {
 
         bool valueSet = false;
         ComPtr<IUnknown> unknown;
-        if (SUCCEEDED(selected.input->GetCurrentPattern(UIA_ValuePatternId, &unknown)) && unknown) {
+        if (selected.input &&
+            SUCCEEDED(selected.input->GetCurrentPattern(UIA_ValuePatternId, &unknown)) && unknown) {
             ComPtr<IUIAutomationValuePattern> valuePattern;
             if (SUCCEEDED(unknown.As(&valuePattern)) && valuePattern) {
                 BOOL readOnly = TRUE;
@@ -622,55 +863,298 @@ struct WebInputPicker::Impl {
     Target candidate;
     Target selected;
     HWND lastWindow = nullptr;
+    ULONGLONG lastInspectionTick = 0;
     WebInputPickState lastState = WebInputPickState::NoWindow;
+};
+
+struct WebInputPicker::Impl {
+    // COM objects never cross the worker boundary. Only HWNDs, states and names
+    // are copied back to the UI, including when committing/clearing a target.
+    struct Snapshot {
+        WebInputPickState state = WebInputPickState::NoWindow;
+        HWND candidateWindow = nullptr;
+        std::wstring candidateName;
+        bool candidateValid = false;
+        HWND selectedWindow = nullptr;
+        std::wstring selectedName;
+        bool selectedClicksPoint = false;
+    } snapshot;
+
+    struct HoverRequest {
+        POINT point{};
+        HWND ownWindow = nullptr;
+        HWND window = nullptr;
+        ULONGLONG generation = 0;
+    };
+    struct HoverResult {
+        HoverRequest request;
+        Snapshot snapshot;
+        ULONGLONG completedAt = 0;
+    };
+
+    static Snapshot Capture(const PickerAutomation& automation) {
+        const auto& candidate = automation.candidate;
+        const bool accessible = automation.lastState == WebInputPickState::Valid &&
+                                candidate.hwnd && candidate.document && candidate.input;
+        const bool byPoint = automation.lastState == WebInputPickState::ValidByPoint &&
+                             candidate.hwnd && candidate.clicksPoint;
+        return {automation.lastState,    candidate.hwnd,
+                candidate.name,         accessible || byPoint,
+                automation.selected.hwnd, automation.selected.name,
+                automation.selected.clicksPoint};
+    }
+
+    void ClearPreviewSnapshot(WebInputPickState state = WebInputPickState::NoWindow) {
+        snapshot.state = state;
+        snapshot.candidateWindow = nullptr;
+        snapshot.candidateName.clear();
+        snapshot.candidateValid = false;
+        commitReady = false;
+    }
+
+    // Caller holds mutex. Generation changes invalidate an in-flight scan too;
+    // no COM object is released or touched from this thread.
+    void InvalidateHoverLocked() {
+        ++hoverGeneration;
+        pendingHover.reset();
+        completedHover.reset();
+        hoverWindow = nullptr;
+        hoverOwnWindow = nullptr;
+        hasHoverResult = false;
+    }
+
+    void InvalidateHover() {
+        std::lock_guard lock(mutex);
+        InvalidateHoverLocked();
+        commitReady = false;
+    }
+
+    WebInputPickState Preview(POINT point, HWND ownWindow, HWND window,
+                             WebInputPickState hitState, ULONGLONG now) {
+        std::lock_guard lock(mutex);
+        commitReady = false;
+        if (hitState != WebInputPickState::Checking) {
+            InvalidateHoverLocked();
+            ClearPreviewSnapshot(hitState);
+            return snapshot.state;
+        }
+        if (window != hoverWindow || ownWindow != hoverOwnWindow) {
+            InvalidateHoverLocked();
+            hoverWindow = window;
+            hoverOwnWindow = ownWindow;
+            ClearPreviewSnapshot(WebInputPickState::Checking);
+        }
+        if (completedHover) {
+            // Apply candidate data only: a preview never owns selection state.
+            snapshot.state = completedHover->snapshot.state;
+            snapshot.candidateWindow = completedHover->snapshot.candidateWindow;
+            snapshot.candidateName = std::move(completedHover->snapshot.candidateName);
+            snapshot.candidateValid = completedHover->snapshot.candidateValid;
+            hoverCompletedAt = completedHover->completedAt;
+            hasHoverResult = true;
+            completedHover.reset();
+        }
+        const bool fresh = hasHoverResult &&
+            webinput::CanReuseInspection(window, hoverWindow,
+                                        std::max(now, hoverCompletedAt), hoverCompletedAt, false);
+        const bool running = runningHover && runningHover->generation == hoverGeneration;
+        if (!fresh && !running) {
+            // One replaceable slot, never one queued job per mouse message.
+            pendingHover = HoverRequest{point, ownWindow, window, hoverGeneration};
+            wake.notify_one();
+        }
+        return snapshot.state;
+    }
+
+    Impl() : worker([this] { Run(); }) {}
+
+    ~Impl() {
+        {
+            std::lock_guard lock(mutex);
+            stopping = true;
+            pendingHover.reset();
+        }
+        wake.notify_one();
+        worker.join();
+    }
+
+    template <typename Function>
+    void Post(Function function) {
+        {
+            std::lock_guard lock(mutex);
+            jobs.emplace_back(std::move(function));
+        }
+        wake.notify_one();
+    }
+
+    template <typename Function>
+    auto Invoke(Function function) -> std::invoke_result_t<Function, PickerAutomation&> {
+        using Result = std::invoke_result_t<Function, PickerAutomation&>;
+        auto task = std::make_shared<std::packaged_task<Result(PickerAutomation&)>>(
+            std::move(function));
+        auto result = task->get_future();
+        Post([task](PickerAutomation& automation) { (*task)(automation); });
+        return result.get();
+    }
+
+    template <typename Function>
+    void Update(Function function) {
+        snapshot = Invoke([function = std::move(function)](PickerAutomation& automation) {
+            function(automation);
+            return Capture(automation);
+        });
+    }
+
+    void Run() {
+        // UI Automation clients must use an MTA thread without owned windows.
+        // https://learn.microsoft.com/windows/win32/winauto/uiauto-threading
+        const HRESULT initialized = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        {
+            PickerAutomation automation;
+            for (;;) {
+                std::function<void(PickerAutomation&)> job;
+                std::optional<HoverRequest> hover;
+                {
+                    std::unique_lock lock(mutex);
+                    wake.wait(lock, [this] { return stopping || !jobs.empty() || pendingHover; });
+                    if (jobs.empty() && stopping) break;
+                    if (!jobs.empty()) {
+                        // Drop/send/reset take priority over queued previews.
+                        job = std::move(jobs.front());
+                        jobs.pop_front();
+                    } else {
+                        hover = std::move(pendingHover);
+                        pendingHover.reset();
+                        runningHover = hover;
+                    }
+                }
+                if (job) {
+                    job(automation);
+                    continue;
+                }
+                Snapshot result;
+#ifdef WEBINPUT_PICKER_TESTING
+                if (inspectHoverForTesting) result = inspectHoverForTesting(*hover);
+                else
+#endif
+                {
+                    // A newer generation may return to the same HWND after a
+                    // cancelled drag; never borrow that older drag's cache.
+                    if (workerHoverGeneration != hover->generation) {
+                        automation.lastWindow = nullptr;
+                        workerHoverGeneration = hover->generation;
+                    }
+                    automation.Inspect(hover->point, hover->ownWindow, false);
+                    result = Capture(automation);
+                }
+                {
+                    std::lock_guard lock(mutex);
+                    runningHover.reset();
+                    // The browser can move under the original point while UIA
+                    // is busy. Do not display a different window's candidate.
+                    if (hover->generation == hoverGeneration &&
+                        (!result.candidateWindow || result.candidateWindow == hover->window)) {
+                        completedHover = HoverResult{*hover, std::move(result), ::GetTickCount64()};
+                    }
+                }
+            }
+        } // Release every UIA interface on its owning thread before COM exits.
+        if (SUCCEEDED(initialized)) ::CoUninitialize();
+    }
+
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<std::function<void(PickerAutomation&)>> jobs;
+    std::optional<HoverRequest> pendingHover;
+    std::optional<HoverRequest> runningHover;
+    std::optional<HoverResult> completedHover;
+    ULONGLONG hoverGeneration = 0;
+    ULONGLONG workerHoverGeneration = 0;
+    HWND hoverWindow = nullptr;
+    HWND hoverOwnWindow = nullptr;
+    ULONGLONG hoverCompletedAt = 0;
+    bool hasHoverResult = false;
+    bool commitReady = false;
+#ifdef WEBINPUT_PICKER_TESTING
+    std::function<Snapshot(const HoverRequest&)> inspectHoverForTesting;
+#endif
+    bool stopping = false;
+    std::thread worker;
 };
 
 WebInputPicker::WebInputPicker() : m_impl(std::make_unique<Impl>()) {}
 WebInputPicker::~WebInputPicker() = default;
 
-WebInputPickState WebInputPicker::Inspect(POINT screenPoint, HWND ownWindow) {
-    return m_impl->Inspect(screenPoint, ownWindow);
+WebInputPickState WebInputPicker::Preview(POINT screenPoint, HWND ownWindow) {
+    HWND window = nullptr;
+    const auto state = PickWindowAt(screenPoint, ownWindow, window);
+    return m_impl->Preview(screenPoint, ownWindow, window, state, ::GetTickCount64());
+}
+
+WebInputPickState WebInputPicker::Inspect(POINT screenPoint, HWND ownWindow, bool forceRefresh) {
+    m_impl->InvalidateHover();
+    m_impl->Update([=](PickerAutomation& automation) {
+        automation.Inspect(screenPoint, ownWindow, forceRefresh);
+    });
+    m_impl->commitReady = forceRefresh && CandidateValid();
+    return m_impl->snapshot.state;
 }
 
 void WebInputPicker::ResetCandidate() {
-    m_impl->candidate.Reset();
-    m_impl->lastWindow = nullptr;
-    m_impl->lastState = WebInputPickState::NoWindow;
+    m_impl->InvalidateHover();
+    m_impl->ClearPreviewSnapshot();
+    m_impl->Post([](PickerAutomation& automation) {
+        automation.candidate.Reset();
+        automation.lastWindow = nullptr;
+        automation.lastInspectionTick = 0;
+        automation.lastState = WebInputPickState::NoWindow;
+    });
 }
 
 bool WebInputPicker::CommitCandidate() {
-    if (m_impl->lastState != WebInputPickState::Valid || !m_impl->candidate.hwnd ||
-        !m_impl->candidate.document || !m_impl->candidate.input) {
-        return false;
-    }
-    m_impl->selected = m_impl->candidate;
+    if (!m_impl->commitReady || !CandidateValid()) return false;
+    m_impl->InvalidateHover();
+    m_impl->Update([](PickerAutomation& automation) { automation.selected = automation.candidate; });
     return true;
 }
 
 bool WebInputPicker::CandidateValid() const {
-    return m_impl->lastState == WebInputPickState::Valid && m_impl->candidate.hwnd;
+    return m_impl->snapshot.candidateValid;
 }
 
 HWND WebInputPicker::CandidateWindow() const {
-    return m_impl->candidate.hwnd;
+    return m_impl->snapshot.candidateWindow;
 }
 
 const std::wstring& WebInputPicker::CandidateName() const {
-    return m_impl->candidate.name;
+    return m_impl->snapshot.candidateName;
 }
 
 HWND WebInputPicker::SelectedWindow() const {
-    return m_impl->selected.hwnd;
+    return m_impl->snapshot.selectedWindow;
 }
 
 const std::wstring& WebInputPicker::SelectedName() const {
-    return m_impl->selected.name;
+    return m_impl->snapshot.selectedName;
+}
+
+bool WebInputPicker::SelectedClicksPoint() const {
+    return m_impl->snapshot.selectedClicksPoint;
 }
 
 void WebInputPicker::ClearSelected() {
-    m_impl->selected.Reset();
+    m_impl->InvalidateHover();
+    m_impl->ClearPreviewSnapshot();
+    m_impl->Update([](PickerAutomation& automation) { automation.selected.Reset(); });
 }
 
 bool WebInputPicker::SendText(const std::wstring& text, bool pressEnter, std::wstring& error) {
-    return m_impl->SendText(text, pressEnter, error);
+    m_impl->InvalidateHover();
+    auto result = m_impl->Invoke([text, pressEnter](PickerAutomation& automation) {
+        std::wstring message;
+        const bool sent = automation.SendText(text, pressEnter, message);
+        return std::make_pair(sent, std::move(message));
+    });
+    error = std::move(result.second);
+    return result.first;
 }
