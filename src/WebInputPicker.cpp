@@ -56,9 +56,6 @@ std::wstring WindowClass(HWND hwnd) {
 }
 
 struct ContentFrameSearch {
-    POINT point{};
-    bool requirePoint = false;
-    bool sawContent = false;
     RECT frame{};
     long long area = 0;
     bool found = false;
@@ -71,13 +68,11 @@ BOOL CALLBACK FindContentFrame(HWND child, LPARAM param) {
     }
     RECT bounds{};
     if (!::GetWindowRect(child, &bounds) || ::IsRectEmpty(&bounds)) return TRUE;
-    search->sawContent = true;
-    if (search->requirePoint && !::PtInRect(&bounds, search->point)) return TRUE;
 
     // Chromium keeps several render surfaces per window: besides the page there
-    // is one for the address bar dropdown and a placeholder a few pixels wide.
-    // They overlap, and enumeration order is z-order, so compare sizes instead
-    // of taking the first match. The page viewport is always the largest.
+    // is one covering the address bar for its dropdown, and a placeholder a few
+    // pixels wide. They overlap, and enumeration order is z-order, so compare
+    // sizes instead of taking the first match; the page viewport is the largest.
     const long long area = static_cast<long long>(bounds.right - bounds.left) *
                            static_cast<long long>(bounds.bottom - bounds.top);
     if (!search->found || area > search->area) {
@@ -91,17 +86,18 @@ BOOL CALLBACK FindContentFrame(HWND child, LPARAM param) {
 // Locates the page viewport of a browser window. Chromium draws pages into a
 // dedicated child window, so its rectangle separates the page from the toolbar
 // and tab strip. Browsers without such a child fall back to the client area.
+// With a point supplied, the page area must also contain it. The point is only
+// ever compared against the viewport, never against the other render surfaces:
+// the one behind the address bar dropdown reaches over the toolbar, and letting
+// it answer for the page would make the toolbar look pickable.
 bool WebContentFrame(HWND root, const POINT* requirePoint, RECT& frame) {
     ContentFrameSearch search;
-    search.requirePoint = requirePoint != nullptr;
-    if (requirePoint) search.point = *requirePoint;
     ::EnumChildWindows(root, &FindContentFrame, reinterpret_cast<LPARAM>(&search));
     if (search.found) {
+        if (requirePoint && !::PtInRect(&search.frame, *requirePoint)) return false;
         frame = search.frame;
         return true;
     }
-    // A page window exists but the caller's point is elsewhere in the browser.
-    if (search.sawContent) return false;
 
     RECT client{};
     if (!::GetClientRect(root, &client) || ::IsRectEmpty(&client)) return false;
@@ -269,19 +265,22 @@ bool InjectEvents(const std::vector<INPUT>& events) {
                        sizeof(INPUT)) == events.size();
 }
 
-bool ReplaceWithKeyboard(const std::wstring& text) {
+// Clears the target and types the caption, optionally submitting it, as one
+// injection. Windows hands queued keystrokes to whatever holds the keyboard
+// focus at the moment it delivers each one, so every gap between calls here was
+// a chance for the target to lose focus and swallow part of a caption: the text
+// could land while the Enter that submits it did not, leaving the caption in a
+// draft that the next send then overwrote.
+bool ReplaceWithKeyboard(const std::wstring& text, bool pressEnter) {
     std::vector<INPUT> events;
-    events.reserve(8);
+    events.reserve(text.size() * 2 + 8);
     AddVirtualKey(events, VK_CONTROL);
     AddVirtualKey(events, 'A');
     AddVirtualKey(events, 'A', true);
     AddVirtualKey(events, VK_CONTROL, true);
     AddVirtualKey(events, VK_BACK);
     AddVirtualKey(events, VK_BACK, true);
-    if (!InjectEvents(events)) return false;
 
-    events.clear();
-    events.reserve(256);
     for (size_t index = 0; index < text.size(); ++index) {
         wchar_t character = text[index];
         if (character == L'\r') {
@@ -290,10 +289,11 @@ bool ReplaceWithKeyboard(const std::wstring& text) {
         }
         AddUnicodeKey(events, character);
         AddUnicodeKey(events, character, true);
-        if (events.size() >= 256) {
-            if (!InjectEvents(events)) return false;
-            events.clear();
-        }
+    }
+
+    if (pressEnter) {
+        AddVirtualKey(events, VK_RETURN);
+        AddVirtualKey(events, VK_RETURN, true);
     }
     return InjectEvents(events);
 }
@@ -306,9 +306,65 @@ bool InjectEnter() {
     return InjectEvents(events);
 }
 
-// Chromium needs a moment to route the click to the page and settle focus
-// there before typed characters arrive.
+// Long enough for a browser to notice an injected click, or a newly selected
+// tab to lay itself out, before anything else disturbs it.
 constexpr DWORD kClickSettleMs = 40;
+constexpr DWORD kWaitStepMs = 20;
+// Raising a window owned by another process, and the tab switch that may
+// precede it, both finish well after the call that requested them.
+constexpr DWORD kRaiseTimeoutMs = 700;
+constexpr DWORD kFocusTimeoutMs = 400;
+constexpr DWORD kMessageSyncTimeoutMs = 500;
+// Keyboard focus reaching the browser is observable, but the page element it
+// then hands focus to is chosen over IPC, which this delay covers.
+constexpr DWORD kTypeSettleMs = 60;
+constexpr int kClickAttempts = 3;
+
+bool WindowOwnsPoint(HWND root, POINT point) {
+    const HWND hit = ::WindowFromPoint(point);
+    return hit && ::GetAncestor(hit, GA_ROOT) == root;
+}
+
+bool WindowIsActive(HWND root) {
+    const HWND foreground = ::GetForegroundWindow();
+    return foreground == root || ::GetAncestor(foreground, GA_ROOT) == root;
+}
+
+template <typename Predicate>
+bool WaitUntil(Predicate ready, DWORD timeoutMs) {
+    for (DWORD waited = 0;; waited += kWaitStepMs) {
+        if (ready()) return true;
+        if (waited >= timeoutMs) return false;
+        ::Sleep(kWaitStepMs);
+    }
+}
+
+// Blocks until the target's UI thread has drained everything queued ahead of
+// this message, which is how an injected click is known to be handled.
+void WaitForMessagesProcessed(HWND window) {
+    DWORD_PTR result = 0;
+    ::SendMessageTimeoutW(window, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                          kMessageSyncTimeoutMs, &result);
+}
+
+// Keyboard focus arriving anywhere in the browser window is the last step
+// observable from outside. It cannot say whether the page or the address bar
+// will receive the keys: Chromium keeps Windows-level focus on its frame window
+// and routes keys to the page itself. Focus of the element inside the page also
+// follows over IPC, which is what the settle delay after this covers. Best
+// effort only; whether the browser ends up in front is what gates typing.
+void WaitForKeyboardFocus(HWND root) {
+    const DWORD thread = ::GetWindowThreadProcessId(root, nullptr);
+    if (!thread) return;
+    WaitUntil(
+        [thread, root] {
+            GUITHREADINFO info{};
+            info.cbSize = sizeof(info);
+            return ::GetGUIThreadInfo(thread, &info) && info.hwndFocus &&
+                   ::GetAncestor(info.hwndFocus, GA_ROOT) == root;
+        },
+        kFocusTimeoutMs);
+}
 
 // Absolute pointer moves are expressed in a 0..65535 square spanning the whole
 // virtual desktop. https://learn.microsoft.com/windows/win32/api/winuser/ns-winuser-mouseinput
@@ -443,6 +499,19 @@ struct PickerAutomation {
             }
         }
         return firstVisible;
+    }
+
+    // A browser whose renderer accessibility is switched off can still expose a
+    // Document standing in for the page, with nothing whatsoever beneath it.
+    // A real page always has children, even one that holds no editable field,
+    // so this separates "no page exposed" from "page without an input".
+    bool DocumentExposesPage(IUIAutomationElement* document) {
+        ComPtr<IUIAutomationTreeWalker> walker;
+        if (!document || FAILED(automation->get_ControlViewWalker(&walker)) || !walker) {
+            return true;  // Cannot tell; keep using the accessibility path.
+        }
+        ComPtr<IUIAutomationElement> child;
+        return SUCCEEDED(walker->GetFirstChildElement(document, &child)) && child;
     }
 
     bool IsInsideDocument(IUIAutomationElement* element) {
@@ -655,7 +724,7 @@ struct PickerAutomation {
         }
 
         ComPtr<IUIAutomationElement> document = VisibleDocument(rootElement.Get(), point);
-        if (!document) {
+        if (!document || !DocumentExposesPage(document.Get())) {
             return InspectWithoutAccessiblePage(root, rootElement.Get(), point, retainTab);
         }
 
@@ -706,7 +775,8 @@ struct PickerAutomation {
         return lastState;
     }
 
-    bool SelectRetainedBrowserTab(std::wstring& error) {
+    bool SelectRetainedBrowserTab(bool& switched, std::wstring& error) {
+        switched = false;
         if (!selected.browserTab) return true;
 
         ComPtr<IUnknown> unknown;
@@ -727,42 +797,63 @@ struct PickerAutomation {
             error = L"Could not reactivate the picked browser tab. Pick it again.";
             return false;
         }
+        switched = true;
         return true;
     }
 
-    bool SelectedIsForeground(std::wstring& error) {
-        const HWND foreground = ::GetForegroundWindow();
-        if (foreground == selected.hwnd || ::GetAncestor(foreground, GA_ROOT) == selected.hwnd) {
-            return true;
-        }
+    bool WaitForSelectedActive(std::wstring& error) {
+        const HWND hwnd = selected.hwnd;
+        if (WaitUntil([hwnd] { return WindowIsActive(hwnd); }, kRaiseTimeoutMs)) return true;
         error = L"Windows would not activate the picked window. Bring it forward and try again.";
         return false;
     }
 
     bool ClickSelectedPoint(std::wstring& error) {
-        RECT frame{};
-        if (!WebContentFrame(selected.hwnd, nullptr, frame)) {
-            error = L"The picked browser no longer shows a page area. Pick the tab again.";
-            return false;
+        const HWND hwnd = selected.hwnd;
+        // Clicking the page activates the browser even when this app is not
+        // allowed to raise it, but activation can still be lost to whatever the
+        // user touches meanwhile. Keystrokes go wherever the keyboard focus
+        // ended up, so never type without the browser in front; click the same
+        // spot again instead, which is harmless for a text field.
+        for (int attempt = 0; attempt < kClickAttempts; ++attempt) {
+            if (attempt > 0) ::SetForegroundWindow(hwnd);
+
+            RECT frame{};
+            if (!WebContentFrame(hwnd, nullptr, frame)) {
+                error = L"The picked browser no longer shows a page area. Pick the tab again.";
+                return false;
+            }
+
+            // This click is aimed at bare screen coordinates, so anything
+            // covering the browser would receive the caption instead of the
+            // chat input. Activation was only requested, not completed, so the
+            // window may still be climbing the z-order past this app; wait for
+            // it rather than hit testing once and giving up.
+            const POINT target = webinput::ResolvePickAnchor(frame, selected.anchor);
+            if (!WaitUntil([hwnd, target] { return WindowOwnsPoint(hwnd, target); },
+                           kRaiseTimeoutMs)) {
+                error = L"Another window is covering the picked input. Uncover the browser, or "
+                        L"turn off Always on top for this app, and try again.";
+                return false;
+            }
+            if (!ClickScreenPoint(target)) {
+                error = L"Windows could not click the picked input. An elevated target may "
+                        L"require this app to run as administrator.";
+                return false;
+            }
+
+            // Release keystrokes only once the browser has actually taken the
+            // click and put the keyboard on its page surface. Typing straight
+            // after the click used to lose captions whenever focus was still
+            // on its way.
+            WaitForMessagesProcessed(hwnd);
+            WaitForKeyboardFocus(hwnd);
+            ::Sleep(kTypeSettleMs);
+            if (WindowIsActive(hwnd)) return true;
         }
 
-        const POINT target = webinput::ResolvePickAnchor(frame, selected.anchor);
-        // This click is aimed at bare screen coordinates, so anything covering
-        // the browser would receive the caption instead of the chat input.
-        const HWND hit = ::WindowFromPoint(target);
-        if (!hit || ::GetAncestor(hit, GA_ROOT) != selected.hwnd) {
-            error = L"Another window is covering the picked input. Uncover the browser and try "
-                    L"again.";
-            return false;
-        }
-        if (!ClickScreenPoint(target)) {
-            error = L"Windows could not click the picked input. An elevated target may require "
-                    L"this app to run as administrator.";
-            return false;
-        }
-        // Clicking the page activates the browser even when this app is not
-        // allowed to raise it, but confirm before releasing any keystrokes.
-        return SelectedIsForeground(error);
+        error = L"Windows would not activate the picked window. Bring it forward and try again.";
+        return false;
     }
 
     bool FocusSelectedInput(std::wstring& error) {
@@ -774,13 +865,21 @@ struct PickerAutomation {
             error = L"Windows UI Automation is unavailable.";
             return false;
         }
-        if (!SelectRetainedBrowserTab(error)) return false;
+        bool switchedTab = false;
+        if (!SelectRetainedBrowserTab(switchedTab, error)) return false;
 
         if (::IsIconic(selected.hwnd)) ::ShowWindow(selected.hwnd, SW_RESTORE);
         ::SetForegroundWindow(selected.hwnd);
 
+        // A tab that was just brought forward still has to lay itself out
+        // before its input is where the pick recorded it.
+        if (switchedTab) {
+            WaitForMessagesProcessed(selected.hwnd);
+            ::Sleep(kClickSettleMs);
+        }
+
         if (selected.clicksPoint) return ClickSelectedPoint(error);
-        if (!SelectedIsForeground(error)) return false;
+        if (!WaitForSelectedActive(error)) return false;
 
         // First try the exact input retained at pick time. If the browser
         // recreated its accessibility tree while switching tabs, resolve the
@@ -845,11 +944,23 @@ struct PickerAutomation {
         // Contenteditable chat composers sometimes expose TextPattern only.
         // Real keyboard input also gives web frameworks their normal input
         // events, unlike writing an accessibility property directly.
-        if (!valueSet && !ReplaceWithKeyboard(text)) {
-            error =
-                L"Windows could not type into the picked input. An elevated target may require "
-                L"this app to run as administrator.";
-            return false;
+        if (!valueSet) {
+            if (!ReplaceWithKeyboard(text, pressEnter)) {
+                error = L"Windows could not type into the picked input. An elevated target may "
+                        L"require this app to run as administrator.";
+                return false;
+            }
+            // Injecting keystrokes only queues them. Wait for the target to
+            // work through them, then confirm it still held the keyboard the
+            // whole time; otherwise the caption went to whatever took over,
+            // and reporting success would hide that it never arrived.
+            WaitForMessagesProcessed(selected.hwnd);
+            if (!WindowIsActive(selected.hwnd)) {
+                error = L"The picked window lost focus while the caption was being typed, so it "
+                        L"may not have arrived. Try again.";
+                return false;
+            }
+            return true;
         }
 
         if (pressEnter && !InjectEnter()) {

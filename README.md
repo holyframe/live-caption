@@ -142,6 +142,11 @@ and `--force-renderer-accessibility` does **not** override it; see
 No amount of waiting or retrying can find an input in such a window, so the
 picker switches to the point you dropped on.
 
+Such a window exposes its missing page in either of two shapes: no
+`Document` at all, or an empty `Document` standing in for one. Both mean the
+page cannot be read, so the picker treats a `Document` with no children as no
+page rather than as a page without an input.
+
 For those targets the app remembers the drop point inside the page area rather
 than an input element, and Send clicks that point to place the caret before
 typing. The pointer is put back where you left it. Because the point is stored
@@ -154,10 +159,41 @@ This mode aims at bare screen coordinates, so it is deliberately restricted.
 Only known browser windows qualify: an ordinary application that exposes no
 accessible input is still refused rather than clicked blindly. Drops on the tab
 strip or address bar are refused too, since typing a caption there would
-navigate. Before each send the app confirms that the picked window still owns
-that point and became foreground, and refuses if anything covers the browser.
+navigate. A browser window holds several render surfaces, one of which covers
+the address bar for its dropdown, so the page area is identified as the largest
+of them and the drop point is tested only against that.
 Keep the chat input visible at the picked spot; unlike the accessibility path,
 the app cannot see what is actually there.
+
+#### Why a send lands, and when it reports that it did not
+
+Injected keystrokes go to whatever holds the keyboard focus at the moment
+Windows delivers each one, and neither raising a window nor clicking one
+finishes when the call returns. So before typing, Send waits for the picked
+window to actually own the pick point, rather than testing once and refusing:
+requesting activation leaves this app's own window over the browser for a
+moment, which used to make a send fail depending on which won the race. After
+clicking it waits for the browser to take the click and take the keyboard
+before releasing any keystrokes, since characters sent while focus was still
+arriving were dropped. A tab that had to be switched is given time to lay out
+first, and a click that does not activate the browser is retried.
+
+The caption, the keystrokes that clear the input, and the submitting Enter are
+injected as a single batch, because a target that lost focus between them could
+accept the text but not the Enter, leaving the caption in a draft that the next
+send overwrote — a caption silently lost. Send then waits for the target to
+work through the keystrokes and confirms it was still the active window. If it
+was not, Send reports that the caption may not have arrived instead of claiming
+success, and the caption stays selected so it can be sent again.
+
+How far this can be verified has a hard limit: Chromium keeps Windows-level
+keyboard focus on its frame window and routes keys to the page itself, so from
+outside there is no way to tell the page apart from the address bar as the
+recipient, and with page accessibility switched off there is no way to read
+back what arrived.
+
+If Send reports that something covers the picked input, uncover the browser; if
+this app is set to stay on top and overlaps the chat input, turn that off.
 
 #### Picker tests
 
@@ -169,10 +205,14 @@ control types and editability flags without reading page text or input values.
 rejection cases, fresh drops, and target cleanup in an isolated Chrome profile
 against a local test page; it does not send any messages.
 `tests\picker_noax_test.ps1` covers the click fallback by running Chrome with
-`--disable-renderer-accessibility`: it checks that no document is exposed, that
-the toolbar is refused, and that a caption plus Enter reaches the page input
+`--disable-renderer-accessibility`: it checks that no readable page is exposed,
+that the toolbar is refused, and that captions plus Enter reach the page input
 without navigating. The local fixture mirrors what it receives into its window
-title, which is how the test observes a page it cannot read.
+title and counts the messages it receives, which is how the test observes a
+page it cannot read. It sends repeatedly rather than once, so a send that only
+works when focus happens to settle in time is caught instead of passing by
+luck, and it sends once more while another window covers the pick point to
+check that Send waits for the browser to come forward.
 `tests\picker_ui_test.ps1` additionally runs the real `LiveCaptionView.exe` in
 an isolated directory and exercises mouse capture, the red outline, drop,
 the separate selected icon, and right-drag removal. It briefly moves the mouse

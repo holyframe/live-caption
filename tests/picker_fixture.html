@@ -18,23 +18,39 @@ document.title = base;
 const host = document.getElementById('fixture');
 
 // Browsers launched with --disable-renderer-accessibility expose no page at
-// all, so tests observe typed text through the window title instead.
-let enters = 0;
+// all, so tests observe what arrived through the window title instead. The
+// submitted messages are counted so a test can tell a send that silently went
+// nowhere from one that landed.
+const messages = [];
 let focused = 0;
-let text = '';
-function report(value) {
-    if (value !== undefined) text = (value || '').replace(/\s+/g, ' ').trim();
-    document.title = base + ' |' + (text ? ' ' + text : '') +
-        ' [focus=' + focused + '] [enter=' + enters + ']';
+function flatten(value) {
+    return (value === undefined || value === null ? '' : String(value)).replace(/\s+/g, ' ').trim();
+}
+function live() {
+    const field = host.querySelector('textarea, input, [contenteditable]');
+    if (!field) return '';
+    return field.value !== undefined ? field.value : field.textContent;
+}
+function report() {
+    // The trailing word of every message, so a test that sends numbered lines
+    // can tell which one went missing rather than only that one did.
+    const tail = messages.map(message => flatten(message).split(' ').pop()).join(',');
+    document.title = base + ' | live=' + flatten(live()) +
+        ' last=' + flatten(messages[messages.length - 1]) +
+        ' msgs=' + messages.length + ' seq=' + tail + ' focus=' + focused;
 }
 host.addEventListener('focusin', () => { ++focused; report(); });
-host.addEventListener('input', event => report(event.target.value ?? event.target.textContent));
+host.addEventListener('input', report);
 host.addEventListener('keydown', event => {
     if (event.key !== 'Enter') return;
-    ++enters;
-    // Chat composers submit on Enter rather than inserting a newline.
+    // Chat composers submit on Enter and clear themselves rather than
+    // inserting a newline, so behave the same way here.
     event.preventDefault();
-    report(event.target.value ?? event.target.textContent);
+    const field = event.target;
+    messages.push(live());
+    if (field.value !== undefined) field.value = '';
+    else field.textContent = '';
+    report();
 });
 report();
 

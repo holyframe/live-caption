@@ -76,8 +76,16 @@ int wmain(int argc, wchar_t** argv) {
                 if (!doc) continue;
                 BOOL offscreen = TRUE;
                 doc->get_CurrentIsOffscreen(&offscreen);
-                std::printf("  document=%d offscreen=%d usable=%d\n", d, offscreen,
-                            IsUsableWebEdit(doc.Get()));
+                // A browser with its renderer accessibility switched off can
+                // still expose an empty Document standing in for the page.
+                ComPtr<IUIAutomationCondition> anyChild;
+                uia->CreateTrueCondition(&anyChild);
+                ComPtr<IUIAutomationElementArray> children;
+                doc->FindAll(TreeScope_Children, anyChild.Get(), &children);
+                int childCount = 0;
+                if (children) children->get_Length(&childCount);
+                std::printf("  document=%d offscreen=%d usable=%d children=%d\n", d, offscreen,
+                            IsUsableWebEdit(doc.Get()), childCount);
                 ComPtr<IUIAutomationElementArray> nodes;
                 doc->FindAll(TreeScope_Subtree, focusable.Get(), &nodes);
                 int nodeCount = 0;

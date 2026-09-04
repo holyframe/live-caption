@@ -45,15 +45,21 @@ public static class NoAx {
         return text.ToString();
     }
     // Chromium draws page content into this child window. Its rectangle is the
-    // page area, excluding the tab strip and the address bar.
+    // page area, excluding the tab strip and the address bar. A window has
+    // several of these surfaces, including one over the address bar for its
+    // dropdown, so take the largest exactly as the picker does.
     public static Rect Content(IntPtr root) {
         Rect found = new Rect();
+        long best = 0;
         EnumChildWindows(root, (child, p) => {
             var name = new StringBuilder(256);
             GetClassNameW(child, name, name.Capacity);
             if (name.ToString() != "Chrome_RenderWidgetHostHWND" || !IsWindowVisible(child)) return true;
-            GetWindowRect(child, out found);
-            return false;
+            Rect r;
+            if (!GetWindowRect(child, out r)) return true;
+            long area = (long)(r.R - r.L) * (r.B - r.T);
+            if (area > best) { best = area; found = r; }
+            return true;
         }, IntPtr.Zero);
         return found;
     }
@@ -63,10 +69,23 @@ public static class NoAx {
 $fixture = [Uri]::new((Join-Path $PSScriptRoot 'picker_fixture.html')).AbsoluteUri
 $profileDir = Join-Path $repo ('build\picker-noax-test-' + [Guid]::NewGuid().ToString('N'))
 $sent = 'live caption regression line'
+# Sending once can pass by luck. Repeat enough times to expose a send that only
+# works when focus happens to settle before the keystrokes arrive.
+$repeat = 8
 $failures = 0
 function Check([bool]$passed, [string]$name) {
     Write-Output ("{0,-70} {1}" -f $name, $(if ($passed) { 'PASS' } else { 'FAIL' }))
     if (!$passed) { $script:failures++ }
+}
+
+# Closing the browser window leaves its helper processes running for a while,
+# and each one holds the disposable profile open. Left behind, they accumulate
+# across runs until the next browser cannot start. The profile path carries a
+# fresh GUID, so this only ever matches processes this test started.
+function Stop-ProfileBrowsers([string]$profilePath) {
+    Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine.Contains($profilePath) } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
 [void][NoAx]::SetThreadDpiAwarenessContext([IntPtr](-4))
@@ -100,9 +119,18 @@ try {
 
     # The picker must see no accessible page at all; that is the condition this
     # whole test exists for.
+    # The switch leaves the page invisible to UI Automation in one of two
+    # shapes: no Document at all, or an empty Document standing in for it.
     $probe = & (Join-Path $repo 'build\picker_probe.exe') $window.ToInt64()
-    Check ([bool]($probe | Select-String -SimpleMatch 'documents=0')) `
-          'browser exposes no accessible document'
+    $noPage = [bool]($probe | Select-String -SimpleMatch 'documents=0') -or
+              [bool]($probe | Select-String -SimpleMatch 'children=0')
+    Check $noPage 'browser exposes no accessible page'
+    if (!$noPage) {
+        Write-Output '--- probe output (expected no accessible page) ---'
+        $probe | Write-Output
+        Write-Output '--- browser command line ---'
+        (Get-CimInstance Win32_Process -Filter "ProcessId=$($browser.Id)").CommandLine | Write-Output
+    }
 
     $content = [NoAx]::Content($window)
     Check (($content.R - $content.L) -gt 0) 'page area child window located'
@@ -131,8 +159,9 @@ try {
     [void][NoAx]::SetCursorPos($park.X, $park.Y)
 
     # 6 = ValidByPoint: the page area is pickable by remembering the point.
-    $send = & (Join-Path $repo 'build\picker_send_probe.exe') $window.ToInt64() $pageX $pageY 6 $sent 1
-    Check ($LASTEXITCODE -eq 0) 'page area is picked and typed into by clicking'
+    $send = & (Join-Path $repo 'build\picker_send_probe.exe') `
+                $window.ToInt64() $pageX $pageY 6 $sent 1 $repeat
+    Check ($LASTEXITCODE -eq 0) 'every send reported success'
     $send | Write-Output
     Check ([bool]($send | Select-String -SimpleMatch 'clicksPoint=1')) `
           'target reports that it types by clicking'
@@ -140,16 +169,35 @@ try {
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     do {
         $title = [NoAx]::Title($window)
-        if ($title.Contains($sent)) { break }
+        if ($title.Contains("msgs=$repeat")) { break }
         Start-Sleep -Milliseconds 200
     } while ([DateTime]::UtcNow -lt $deadline)
     Write-Output "title after send: $title"
     # Typing into the address bar would also put the text in the window title,
     # via a search results page, so require the fixture to still be loaded.
     Check ($title.StartsWith('Picker test fixture fill |')) 'the browser did not navigate away'
-    Check ($title.Contains('[focus=1]')) 'the click focused the page input'
-    Check ($title.Contains($sent)) 'typed text reached the page input'
-    Check ($title.Contains('[enter=1]')) 'the requested Enter key reached the page input'
+    Check (!$title.Contains('focus=0')) 'the click focused the page input'
+    # The fixture counts submitted messages, so a send that reported success but
+    # typed into nothing is caught here rather than passing unnoticed.
+    Check ($title.Contains("msgs=$repeat")) "all $repeat sends reached the page input"
+    Check ($title.Contains("last=$sent $repeat")) 'the last send arrived complete and in order'
+
+    # Send while another window still covers the pick point, which is the state
+    # this app's own window is in at the moment Send is pressed. The send has to
+    # wait for the browser to climb over it rather than refuse outright.
+    [void][NoAx]::SetCursorPos($park.X, $park.Y)
+    $covered = & (Join-Path $repo 'build\picker_send_probe.exe') `
+                  $window.ToInt64() $pageX $pageY 6 'covered send' 1 1 250
+    Check ($LASTEXITCODE -eq 0) 'send waits out a window covering the pick point'
+    if ($LASTEXITCODE -ne 0) { $covered | Write-Output }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        $title = [NoAx]::Title($window)
+        if ($title.Contains('last=covered send')) { break }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+    Check ($title.Contains('last=covered send')) 'the briefly covered send reached the input'
 
     $cursor = New-Object NoAx+Point
     [void][NoAx]::GetCursorPos([ref]$cursor)
@@ -169,6 +217,8 @@ try {
         if (!$browser.WaitForExit(3000)) { $browser.Kill() }
     }
     $browser.Dispose()
+    Stop-ProfileBrowsers $profileDir
+    Remove-Item -Recurse -Force -LiteralPath $profileDir -ErrorAction SilentlyContinue
     [void][NoAx]::SetCursorPos($entryCursor.X, $entryCursor.Y)
 }
 
