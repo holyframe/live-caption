@@ -43,8 +43,10 @@ host.addEventListener('focusin', () => { ++focused; report(); });
 host.addEventListener('input', report);
 host.addEventListener('keydown', event => {
     if (event.key !== 'Enter') return;
-    // Chat composers submit on Enter and clear themselves rather than
-    // inserting a newline, so behave the same way here.
+    // Real chat composers submit on Enter and insert a newline on Shift+Enter.
+    // A send that still has Shift down therefore looks successful (the text
+    // is in the box) while never actually submitting — the hotkey's usual miss.
+    if (event.shiftKey) return;
     event.preventDefault();
     const field = event.target;
     messages.push(live());

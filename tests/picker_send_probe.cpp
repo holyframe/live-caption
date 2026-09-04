@@ -62,7 +62,7 @@ void CoverPointBriefly(POINT point, DWORD durationMs) {
 int wmain(int argc, wchar_t** argv) {
     if (argc < 5) {
         std::puts("Usage: picker_send_probe.exe <hwnd> <x> <y> <expected state> [text] [enter] "
-                  "[repeat] [cover ms]");
+                  "[repeat] [cover ms] [hold shift]");
         return 2;
     }
     ::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -75,6 +75,7 @@ int wmain(int argc, wchar_t** argv) {
     const bool pressEnter = argc > 6 && _wtoi(argv[6]) != 0;
     const int repeat = argc > 7 ? (std::max)(_wtoi(argv[7]), 1) : 1;
     const DWORD coverMs = argc > 8 ? static_cast<DWORD>((std::max)(_wtoi(argv[8]), 0)) : 0;
+    const bool holdShift = argc > 9 && _wtoi(argv[9]) != 0;
 
     int result = 0;
     {
@@ -113,9 +114,25 @@ int wmain(int argc, wchar_t** argv) {
                 cover = std::thread(CoverPointBriefly, point, coverMs);
                 ::Sleep(60);  // Let the cover be up before the send looks.
             }
+            // The Send hotkey is typically a Shift chord. Holding Shift here
+            // is the state OnSend sees if the target has not processed the
+            // key-up yet: without releasing it, Enter becomes a newline.
+            if (holdShift) {
+                INPUT down{};
+                down.type = INPUT_KEYBOARD;
+                down.ki.wVk = VK_SHIFT;
+                ::SendInput(1, &down, sizeof(INPUT));
+            }
             std::wstring error;
             const ULONGLONG started = ::GetTickCount64();
             const bool sent = picker.SendText(line, pressEnter, error);
+            if (holdShift) {
+                INPUT up{};
+                up.type = INPUT_KEYBOARD;
+                up.ki.wVk = VK_SHIFT;
+                up.ki.dwFlags = KEYEVENTF_KEYUP;
+                ::SendInput(1, &up, sizeof(INPUT));
+            }
             const ULONGLONG elapsed = ::GetTickCount64() - started;
             if (cover.joinable()) cover.join();
             std::printf("send %d/%d: sent=%d took=%llums error='%ls'\n", attempt, repeat, sent,

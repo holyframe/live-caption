@@ -199,6 +199,24 @@ try {
     } while ([DateTime]::UtcNow -lt $deadline)
     Check ($title.Contains('last=covered send')) 'the briefly covered send reached the input'
 
+    # The Send hotkey is a Shift chord. Holding Shift while sending is what the
+    # target still sees if it has not processed the key-up: chat composers then
+    # treat Enter as a newline and the caption never submits. Send must release
+    # the modifiers so the hotkey matches the button.
+    [void][NoAx]::SetCursorPos($park.X, $park.Y)
+    $shifted = & (Join-Path $repo 'build\picker_send_probe.exe') `
+                  $window.ToInt64() $pageX $pageY 6 'hotkey send' 1 1 0 1
+    Check ($LASTEXITCODE -eq 0) 'send submits even when Shift is still held'
+    if ($LASTEXITCODE -ne 0) { $shifted | Write-Output }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        $title = [NoAx]::Title($window)
+        if ($title.Contains('last=hotkey send')) { break }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+    Check ($title.Contains('last=hotkey send')) 'a Shift-held send submitted instead of inserting a newline'
+
     $cursor = New-Object NoAx+Point
     [void][NoAx]::GetCursorPos([ref]$cursor)
     if ($cursor.X -eq $park.X -and $cursor.Y -eq $park.Y) {

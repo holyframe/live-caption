@@ -230,7 +230,24 @@ focus the hotkey field, then press a new combination. If another application
 already owns that shortcut, this app reports that it is unavailable instead of
 silently substituting a different one.
 The shortcut waits for its keys to be released and then runs the same Send
-action as the button, including the current Press Enter checkbox state.
+action as the button, including the current Press Enter checkbox state. It has
+to wait: typing while a modifier is still held would reshape every keystroke,
+and a held Shift would turn the submitting Enter into a line break.
+
+Two further differences used to make the hotkey miss where the button landed.
+Windows only lets a program raise another program's window if it counts as
+having received the last input event; a global hotkey grants that for about a
+quarter of a second, and the wait for the keys to come up outlasts it. The
+hotkey therefore brings the picked window forward as the key arrives, and Send
+itself can still attach to the current foreground thread if that grant has
+already expired. Clicking Send never needs either step: the app is already the
+foreground window.
+
+The other miss is quieter. Chat composers submit on Enter and insert a newline
+on Shift+Enter. After a Shift chord the target may still see Shift as down
+when the caption's Enter arrives, so the text sits in the box instead of
+sending. Both paths now release every modifier in the same keystroke batch as
+the caption, so the hotkey types what the button types.
 
 ## Settings
 

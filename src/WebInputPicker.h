@@ -61,6 +61,17 @@ public:
     bool SelectedClicksPoint() const;
     void ClearSelected();
 
+    // Asks Windows to bring the retained target forward. Send already does
+    // this, but Windows only grants the request to a process it considers to
+    // have received the last input event, and a global hotkey grants that for
+    // roughly a quarter of a second. Waiting for the hotkey's keys to be
+    // released outlasts it, so the hotkey path calls this first, while the
+    // permission is still there. Returns without touching the worker thread so
+    // that nothing can delay it. Clicking Send never needs it: the app is the
+    // foreground window then. Send also releases modifiers before typing so a
+    // still-held Shift chord cannot turn Enter into a newline.
+    void RaiseSelectedWindow();
+
     // Re-activates the retained browser tab, focuses its editable field, and
     // replaces the field contents. When pressEnter is true a real Enter key is
     // injected after the text has been set.

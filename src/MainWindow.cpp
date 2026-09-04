@@ -1207,6 +1207,13 @@ void MainWindow::UpdateHotkeyRegistration() {
 
 void MainWindow::QueueHotkeySend() {
     if (m_hotkeySendPending) return;
+
+    // Same OnSend as the button, after two hotkey-only steps. Windows lets
+    // this app raise the target only for a moment after the hotkey, so claim
+    // the window now; Send also releases any still-held modifiers so Enter
+    // submits instead of becoming a newline, the usual Shift-chord miss.
+    if (m_view.HasSelection()) m_webInputPicker.RaiseSelectedWindow();
+
     if (HotkeyChordReleased()) {
         OnSend();
         return;

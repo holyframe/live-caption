@@ -251,6 +251,17 @@ void AddVirtualKey(std::vector<INPUT>& events, WORD key, bool keyUp = false) {
     events.push_back(input);
 }
 
+// The Send button is a mouse click, so no modifier is held. The hotkey is
+// typically Shift+Z: even after the physical keys come up, the target may not
+// have processed those key-ups yet, and chat composers treat Shift+Enter as a
+// newline instead of a send. Force every modifier up in the same injection as
+// the caption so both paths type the same keys.
+void AddModifierReleases(std::vector<INPUT>& events) {
+    const WORD keys[] = {VK_LSHIFT, VK_RSHIFT, VK_SHIFT,      VK_LCONTROL, VK_RCONTROL, VK_CONTROL,
+                         VK_LMENU,  VK_RMENU,  VK_MENU,       VK_LWIN,     VK_RWIN};
+    for (WORD key : keys) AddVirtualKey(events, key, true);
+}
+
 void AddUnicodeKey(std::vector<INPUT>& events, wchar_t character, bool keyUp = false) {
     INPUT input{};
     input.type = INPUT_KEYBOARD;
@@ -273,7 +284,8 @@ bool InjectEvents(const std::vector<INPUT>& events) {
 // draft that the next send then overwrote.
 bool ReplaceWithKeyboard(const std::wstring& text, bool pressEnter) {
     std::vector<INPUT> events;
-    events.reserve(text.size() * 2 + 8);
+    events.reserve(text.size() * 2 + 24);
+    AddModifierReleases(events);
     AddVirtualKey(events, VK_CONTROL);
     AddVirtualKey(events, 'A');
     AddVirtualKey(events, 'A', true);
@@ -300,7 +312,8 @@ bool ReplaceWithKeyboard(const std::wstring& text, bool pressEnter) {
 
 bool InjectEnter() {
     std::vector<INPUT> events;
-    events.reserve(2);
+    events.reserve(16);
+    AddModifierReleases(events);
     AddVirtualKey(events, VK_RETURN);
     AddVirtualKey(events, VK_RETURN, true);
     return InjectEvents(events);
@@ -328,6 +341,40 @@ bool WindowOwnsPoint(HWND root, POINT point) {
 bool WindowIsActive(HWND root) {
     const HWND foreground = ::GetForegroundWindow();
     return foreground == root || ::GetAncestor(foreground, GA_ROOT) == root;
+}
+
+// The Send button can always raise the target: this app is the foreground
+// window then. A global hotkey only grants that for a moment, and waiting for
+// its keys to come up outlasts the grant. Attach the calling thread to whoever
+// currently holds the keyboard so SetForegroundWindow is allowed either way.
+bool ActivateWindow(HWND hwnd) {
+    if (!hwnd || !::IsWindow(hwnd)) return false;
+    if (::IsIconic(hwnd)) ::ShowWindow(hwnd, SW_RESTORE);
+    if (WindowIsActive(hwnd) || ::SetForegroundWindow(hwnd)) return true;
+
+    const HWND foreground = ::GetForegroundWindow();
+    const DWORD currentThread = ::GetCurrentThreadId();
+    const DWORD targetThread = ::GetWindowThreadProcessId(hwnd, nullptr);
+    const DWORD foregroundThread =
+        foreground ? ::GetWindowThreadProcessId(foreground, nullptr) : 0;
+
+    if (foregroundThread && foregroundThread != currentThread) {
+        ::AttachThreadInput(currentThread, foregroundThread, TRUE);
+    }
+    if (targetThread && targetThread != currentThread && targetThread != foregroundThread) {
+        ::AttachThreadInput(currentThread, targetThread, TRUE);
+    }
+
+    ::BringWindowToTop(hwnd);
+    const bool raised = ::SetForegroundWindow(hwnd) != FALSE || WindowIsActive(hwnd);
+
+    if (targetThread && targetThread != currentThread && targetThread != foregroundThread) {
+        ::AttachThreadInput(currentThread, targetThread, FALSE);
+    }
+    if (foregroundThread && foregroundThread != currentThread) {
+        ::AttachThreadInput(currentThread, foregroundThread, FALSE);
+    }
+    return raised;
 }
 
 template <typename Predicate>
@@ -816,7 +863,7 @@ struct PickerAutomation {
         // ended up, so never type without the browser in front; click the same
         // spot again instead, which is harmless for a text field.
         for (int attempt = 0; attempt < kClickAttempts; ++attempt) {
-            if (attempt > 0) ::SetForegroundWindow(hwnd);
+            if (attempt > 0) ActivateWindow(hwnd);
 
             RECT frame{};
             if (!WebContentFrame(hwnd, nullptr, frame)) {
@@ -868,8 +915,7 @@ struct PickerAutomation {
         bool switchedTab = false;
         if (!SelectRetainedBrowserTab(switchedTab, error)) return false;
 
-        if (::IsIconic(selected.hwnd)) ::ShowWindow(selected.hwnd, SW_RESTORE);
-        ::SetForegroundWindow(selected.hwnd);
+        ActivateWindow(selected.hwnd);
 
         // A tab that was just brought forward still has to lay itself out
         // before its input is where the pick recorded it.
@@ -1251,6 +1297,16 @@ const std::wstring& WebInputPicker::SelectedName() const {
 
 bool WebInputPicker::SelectedClicksPoint() const {
     return m_impl->snapshot.selectedClicksPoint;
+}
+
+void WebInputPicker::RaiseSelectedWindow() {
+    const HWND target = m_impl->snapshot.selectedWindow;
+    if (!target || !::IsWindow(target)) return;
+    // Called from the hotkey handler while Windows still grants this process
+    // the right to raise another window. Send later uses ActivateWindow, which
+    // can attach threads if that grant has expired.
+    if (::IsIconic(target)) ::ShowWindow(target, SW_RESTORE);
+    ::SetForegroundWindow(target);
 }
 
 void WebInputPicker::ClearSelected() {
