@@ -135,7 +135,10 @@ try {
         Start-Sleep -Milliseconds 300
         $start = [PickerUI]::Center($picker)
         $target = [PickerUI]::Center($browserWindow)
-        if ([PickerUI]::WindowFromPoint($start) -ne $picker) { throw 'Test picker button is occluded.' }
+        $pickerHit = [PickerUI]::WindowFromPoint($start)
+        if ($pickerHit -ne $picker) {
+            throw "Test picker button is occluded: picker=$picker hit=$pickerHit hitId=$([PickerUI]::GetDlgCtrlID($pickerHit))."
+        }
         $moved = [PickerUI]::SetCursorPos($start.X, $start.Y)
         Start-Sleep -Milliseconds 100
         $actual = [PickerUI+Point]::new()
@@ -163,11 +166,11 @@ try {
             $currentStatus = [PickerUI]::Text($status)
             if ($currentStatus -ne $lastStatus) { Write-Output "$scenario hover: $currentStatus"; $lastStatus=$currentStatus }
         }
-        # With renderer accessibility off the page is invisible to UI Automation,
-        # so every scenario is picked the same way: by remembering the point.
-        # Otherwise the field itself is inspected and unusable ones are refused.
-        $expected = if ($DisableAccessibility) { $true }
-                    else { $scenario -notin @('readonly','disabled','password','empty') }
+        # With renderer accessibility off the input cannot be proven and every
+        # scenario must be refused. Otherwise the field itself is inspected and
+        # unusable ones are refused.
+        $expected = !$DisableAccessibility -and
+                    $scenario -notin @('readonly','disabled','password','empty')
         $outline = [PickerUI]::Outline($app.Id)
         if ($expected -and ![PickerUI]::RedOutline($outline)) {
             Write-Output "Failed hover: $([PickerUI]::Text($status)); target=$browserWindow hit=$([PickerUI]::GetAncestor([PickerUI]::WindowFromPoint($target),2))"

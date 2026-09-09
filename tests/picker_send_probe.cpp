@@ -59,10 +59,27 @@ void CoverPointBriefly(POINT point, DWORD durationMs) {
     ::DestroyWindow(cover);
 }
 
+bool SwitchToSecondTab(HWND target) {
+    if (!ActivateWindow(target) ||
+        !WaitUntil([target] { return WindowIsActive(target); }, kRaiseTimeoutMs)) {
+        return false;
+    }
+    std::vector<INPUT> events;
+    AddModifierReleases(events);
+    AddVirtualKey(events, VK_CONTROL);
+    AddVirtualKey(events, '2');
+    AddVirtualKey(events, '2', true);
+    AddVirtualKey(events, VK_CONTROL, true);
+    if (!InjectEvents(events)) return false;
+    WaitForMessagesProcessed(target);
+    ::Sleep(200);
+    return true;
+}
+
 int wmain(int argc, wchar_t** argv) {
     if (argc < 5) {
         std::puts("Usage: picker_send_probe.exe <hwnd> <x> <y> <expected state> [text] [enter] "
-                  "[repeat] [cover ms] [hold shift]");
+                  "[repeat] [cover ms] [hold shift] [switch second tab]");
         return 2;
     }
     ::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -76,6 +93,7 @@ int wmain(int argc, wchar_t** argv) {
     const int repeat = argc > 7 ? (std::max)(_wtoi(argv[7]), 1) : 1;
     const DWORD coverMs = argc > 8 ? static_cast<DWORD>((std::max)(_wtoi(argv[8]), 0)) : 0;
     const bool holdShift = argc > 9 && _wtoi(argv[9]) != 0;
+    const bool switchSecondTab = argc > 10 && _wtoi(argv[10]) != 0;
 
     int result = 0;
     {
@@ -96,11 +114,14 @@ int wmain(int argc, wchar_t** argv) {
 
         const bool pickable = IsPickableState(static_cast<WebInputPickState>(state));
         const bool committed = picker.CommitCandidate();
-        std::printf("pickable=%d committed=%d clicksPoint=%d window=%llu\n", pickable, committed,
-                    picker.SelectedClicksPoint(),
+        std::printf("pickable=%d committed=%d window=%llu\n", pickable, committed,
                     reinterpret_cast<unsigned long long>(picker.SelectedWindow()));
         if (committed != pickable || (committed && picker.SelectedWindow() != hwnd)) {
             std::puts("FAIL: commit did not match the reported state");
+            result = 1;
+        }
+        if (committed && switchSecondTab && !SwitchToSecondTab(hwnd)) {
+            std::puts("FAIL: could not switch away from the retained browser tab");
             result = 1;
         }
 
@@ -125,7 +146,9 @@ int wmain(int argc, wchar_t** argv) {
             }
             std::wstring error;
             const ULONGLONG started = ::GetTickCount64();
-            const bool sent = picker.SendText(line, pressEnter, error);
+            const auto outcome = picker.SendText(line, pressEnter, error);
+            const bool sent = outcome == WebInputSendResult::Inserted ||
+                              outcome == WebInputSendResult::Submitted;
             if (holdShift) {
                 INPUT up{};
                 up.type = INPUT_KEYBOARD;
@@ -135,8 +158,8 @@ int wmain(int argc, wchar_t** argv) {
             }
             const ULONGLONG elapsed = ::GetTickCount64() - started;
             if (cover.joinable()) cover.join();
-            std::printf("send %d/%d: sent=%d took=%llums error='%ls'\n", attempt, repeat, sent,
-                        elapsed, error.c_str());
+            std::printf("send %d/%d: outcome=%d sent=%d took=%llums error='%ls'\n", attempt,
+                        repeat, static_cast<int>(outcome), sent, elapsed, error.c_str());
             ReportInputOwner("after send", hwnd);
             if (!sent) result = 1;
         }

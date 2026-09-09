@@ -12,24 +12,25 @@ enum class WebInputPickState {
     NoEditableInput,
     Valid,
     Checking,
-    // The window is a browser but exposes no accessible page. The pick point is
-    // remembered instead, and Send clicks it before typing.
-    ValidByPoint,
-    // Browser without an accessible page, pointed at its toolbar or tab strip
-    // rather than at the page itself.
-    NoWebContent,
+};
+
+enum class WebInputSendResult {
+    Failed,
+    Inserted,
+    Submitted,
+    SubmissionUnconfirmed,
 };
 
 inline bool IsPickableState(WebInputPickState state) {
-    return state == WebInputPickState::Valid || state == WebInputPickState::ValidByPoint;
+    return state == WebInputPickState::Valid;
 }
 
 // Resolves a browser/WebView tab and one of its editable fields through
 // Windows UI Automation. The selected document and input element are retained
 // so later features (such as Send) can use the exact tab that was picked.
-// Browsers whose renderer accessibility is switched off expose no page at all;
-// for those, the pick point inside the page viewport is retained instead and
-// Send clicks it to place the caret before typing.
+// Browsers whose renderer accessibility is switched off are intentionally
+// rejected: without an accessible input the app cannot prove where text or
+// Enter would be delivered.
 // Public methods are called by the UI thread. UIA objects and all their calls
 // live exclusively on a dedicated, windowless COM MTA worker.
 class WebInputPicker {
@@ -56,9 +57,6 @@ public:
 
     HWND SelectedWindow() const;
     const std::wstring& SelectedName() const;
-    // True when the retained target has no accessible input and Send must click
-    // the remembered page point to focus it.
-    bool SelectedClicksPoint() const;
     void ClearSelected();
 
     // Asks Windows to bring the retained target forward. Send already does
@@ -72,10 +70,12 @@ public:
     // still-held Shift chord cannot turn Enter into a newline.
     void RaiseSelectedWindow();
 
-    // Re-activates the retained browser tab, focuses its editable field, and
-    // replaces the field contents. When pressEnter is true a real Enter key is
-    // injected after the text has been set.
-    bool SendText(const std::wstring& text, bool pressEnter, std::wstring& error);
+    // Re-activates the retained browser tab and exact editable field, preserves
+    // its existing contents, and appends with real keyboard input. When
+    // requested, Enter follows in the same injection so focus cannot move
+    // between the caption and submission.
+    WebInputSendResult SendText(const std::wstring& text, bool pressEnter,
+                                std::wstring& message);
 
 private:
 #ifdef WEBINPUT_PICKER_TESTING

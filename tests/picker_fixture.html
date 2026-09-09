@@ -62,10 +62,18 @@ function addInput() {
     if (scenario === 'readonly') field.readOnly = true;
     if (scenario === 'disabled') field.disabled = true;
     if (scenario === 'password') field.type = 'password';
+    if (scenario === 'replace') {
+        field.addEventListener('focus', () => {
+            // Simulate a framework replacing its composer after it was picked.
+            // The sender must reject the stale field, not scan for this clone.
+            field.replaceWith(field.cloneNode(true));
+            report();
+        }, {once: true});
+    }
     host.append(field);
 }
 if (scenario === 'rich') {
-    host.innerHTML = '<div contenteditable="true" role="textbox" aria-label="Chat message"></div>';
+    host.innerHTML = '<div contenteditable="true" role="textbox" aria-label="Chat message">rich draft|</div>';
 } else if (scenario === 'delayed') {
     setTimeout(addInput, 2500);
 } else if (scenario === 'fill') {

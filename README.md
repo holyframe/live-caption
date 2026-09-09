@@ -95,13 +95,15 @@ WebView window. A crosshair means the active web tab can be selected; the
 no-drop cursor means it cannot. A valid target is also surrounded by a
 click-through red outline. Releasing on it remembers that exact UI Automation
 document and input element, and displays the target window's icon in a separate
-tile beneath the picker. Browsers that hide their page from accessibility tools
-are picked by remembering the drop point instead, so release directly on the
-message box for those; see below.
+tile beneath the picker. Browsers that hide their page or input from
+accessibility tools are rejected because the app cannot prove where text and
+Enter would be delivered.
 Click Send after selecting text in the caption pane. The app reactivates the
-retained browser tab, focuses its chat input, and replaces the input contents
-with the selection. When Press Enter is checked it then submits with Enter;
-otherwise the populated input is left for review.
+retained browser tab, confirms the exact retained chat input, moves its caret
+to the end, and appends the selection with real keyboard input without erasing
+an existing draft. When Press Enter is checked, Enter follows the caption in
+the same keyboard batch and submission is confirmed by the composer clearing;
+otherwise the combined input value is read back before success is reported.
 If a page contains several editable fields, release directly over the desired
 chat composer to select it instead of the automatically preferred field.
 To forget a picked target, right-drag its separate icon tile outside the app
@@ -129,97 +131,70 @@ fields, password fields, and tabs with no visible editable input are rejected.
 If the status says no accessible page was found, bring the intended chat tab
 forward, dismiss any browser settings/dialog overlay, click its message box,
 and retry the drag. Picking uses the active visible page, not an inactive tab
-in the browser's tab strip. Browsers that expose no page at all are handled by
-the click fallback described below.
+in the browser's tab strip.
 
 #### Browsers that hide their page from accessibility tools
 
 Some Chromium builds are launched with `--disable-renderer-accessibility`,
 which stops the browser from exposing the page at all. Privacy and
-anti-fingerprinting browsers (ixBrowser, for example) set it on every profile,
+anti-fingerprinting browsers can use this switch,
 and `--force-renderer-accessibility` does **not** override it; see
 [Chromium's accessibility switches](https://chromium.googlesource.com/chromium/src/+/HEAD/ui/accessibility/accessibility_switches.cc).
 No amount of waiting or retrying can find an input in such a window, so the
-picker switches to the point you dropped on.
+picker shows no red outline and refuses the drop.
 
 Such a window exposes its missing page in either of two shapes: no
 `Document` at all, or an empty `Document` standing in for one. Both mean the
 page cannot be read, so the picker treats a `Document` with no children as no
 page rather than as a page without an input.
 
-For those targets the app remembers the drop point inside the page area rather
-than an input element, and Send clicks that point to place the caret before
-typing. The pointer is put back where you left it. Because the point is stored
-relative to the nearest edges of the page viewport, moving the window, and
-resizing it around a composer anchored to the bottom of the page, both keep the
-target valid. The status bar says so when such a target is picked, and picking
-is otherwise unchanged.
-
-This mode aims at bare screen coordinates, so it is deliberately restricted.
-Only known browser windows qualify: an ordinary application that exposes no
-accessible input is still refused rather than clicked blindly. Drops on the tab
-strip or address bar are refused too, since typing a caption there would
-navigate. A browser window holds several render surfaces, one of which covers
-the address bar for its dropdown, so the page area is identified as the largest
-of them and the drop point is tested only against that.
-Keep the chat input visible at the picked spot; unlike the accessibility path,
-the app cannot see what is actually there.
+There is intentionally no screen-coordinate fallback. It could only prove that
+the point belongs to a browser surface, not that it is still the intended chat
+input, so typing or submitting there could affect the wrong control.
 
 #### Why a send lands, and when it reports that it did not
 
-Injected keystrokes go to whatever holds the keyboard focus at the moment
-Windows delivers each one, and neither raising a window nor clicking one
-finishes when the call returns. So before typing, Send waits for the picked
-window to actually own the pick point, rather than testing once and refusing:
-requesting activation leaves this app's own window over the browser for a
-moment, which used to make a send fail depending on which won the race. After
-clicking it waits for the browser to take the click and take the keyboard
-before releasing any keystrokes, since characters sent while focus was still
-arriving were dropped. A tab that had to be switched is given time to lay out
-first, and a click that does not activate the browser is retried.
+Before typing, Send verifies the original browser process, reactivates the
+retained native tab when available, and requires the same retained document and
+input to remain visible and writable. It never substitutes another editable
+field after navigation, a tab change, or a page re-render; the user is asked to
+pick again instead.
 
-The caption, the keystrokes that clear the input, and the submitting Enter are
-injected as a single batch, because a target that lost focus between them could
-accept the text but not the Enter, leaving the caption in a draft that the next
-send overwrote — a caption silently lost. Send then waits for the target to
-work through the keystrokes and confirms it was still the active window. If it
-was not, Send reports that the caption may not have arrived instead of claiming
-success, and the caption stays selected so it can be sent again.
+The exact input receives focus, its current value is read, and one keyboard
+batch moves to the end and appends the caption. Without Press Enter, Send reads
+the combined input through UI Automation and compares the result, normalizing
+only Windows/HTML newline forms. If focus changed or the text does not match,
+the operation is not reported as successful.
 
-How far this can be verified has a hard limit: Chromium keeps Windows-level
-keyboard focus on its frame window and routes keys to the page itself, so from
-outside there is no way to tell the page apart from the address bar as the
-recipient, and with page accessibility switched off there is no way to read
-back what arrived.
-
-If Send reports that something covers the picked input, uncover the browser; if
-this app is set to stay on top and overlaps the chat input, turn that off.
+With Press Enter checked, Enter is queued in that same batch so the browser
+cannot lose focus in a gap between text and submission. The app then waits for
+the exact composer to become empty, including the structural whitespace used
+by empty rich-text editors. If clearing cannot be observed, the status says
+submission is unconfirmed and the caption selection is cleared to prevent an
+accidental duplicate send.
 
 #### Picker tests
 
-`tests\run_tests.bat` includes picker validation, retry-cache, viewport-anchor,
+`tests\run_tests.bat` includes picker validation, text-comparison, retry-cache,
 and deterministic slow-provider/coalescing/cancellation regression tests.
 For read-only diagnostics, `tests\picker_probe.bat <decimal HWND>` reports
 control types and editability flags without reading page text or input values.
 `tests\picker_browser_test.ps1` optionally exercises delayed and rich inputs,
 rejection cases, fresh drops, and target cleanup in an isolated Chrome profile
 against a local test page; it does not send any messages.
-`tests\picker_noax_test.ps1` covers the click fallback by running Chrome with
-`--disable-renderer-accessibility`: it checks that no readable page is exposed,
-that the toolbar is refused, and that captions plus Enter reach the page input
-without navigating. The local fixture mirrors what it receives into its window
-title and counts the messages it receives, which is how the test observes a
-page it cannot read. It sends repeatedly rather than once, so a send that only
-works when focus happens to settle in time is caught instead of passing by
-luck, and it sends once more while another window covers the pick point to
-check that Send waits for the browser to come forward.
+`tests\picker_noax_test.ps1` runs Chrome with renderer accessibility disabled
+and verifies that no readable page, pickable target, or retained target is
+created.
+`tests\picker_send_test.ps1` verifies real keyboard insertion, read-back,
+confirmed Enter submission, native-tab reactivation, contenteditable
+composers, and refusal to redirect text after a page replaces the picked input.
 `tests\picker_ui_test.ps1` additionally runs the real `LiveCaptionView.exe` in
 an isolated directory and exercises mouse capture, the red outline, drop,
 the separate selected icon, and right-drag removal. It briefly moves the mouse
 and opens local test windows, then restores the pointer and foreground window.
 Use `-BrowserPath <exe>` for a Chromium variant, `-ExePath <exe>` to test a
 build other than `build\LiveCaptionView.exe`, or `-DisableAccessibility` to
-exercise the click fallback through the real UI. The browser test scripts
+confirm that the real UI refuses an unverified browser. The browser test scripts
 retain disposable profiles under `build/` for diagnostics; none of them use
 existing browser profiles.
 
@@ -246,8 +221,9 @@ foreground window.
 The other miss is quieter. Chat composers submit on Enter and insert a newline
 on Shift+Enter. After a Shift chord the target may still see Shift as down
 when the caption's Enter arrives, so the text sits in the box instead of
-sending. Both paths now release every modifier in the same keystroke batch as
-the caption, so the hotkey types what the button types.
+sending. Both paths release every modifier before inserting the caption and
+again before the separately verified Enter step, so the hotkey types what the
+button types.
 
 ## Settings
 

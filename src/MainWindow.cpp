@@ -1389,19 +1389,28 @@ void MainWindow::OnSend() {
         ::SendMessageW(m_pressEnterCheck, BM_GETCHECK, 0, 0) == BST_CHECKED;
     m_settings.pressEnter = pressEnter;
 
-    std::wstring error;
-    if (!m_webInputPicker.SendText(m_view.SelectedText(), pressEnter, error)) {
-        SetStatus(error);
+    std::wstring detail;
+    const auto result = m_webInputPicker.SendText(m_view.SelectedText(), pressEnter, detail);
+    if (result == WebInputSendResult::Failed) {
+        SetStatus(detail);
         return;
     }
 
-    // A successful send completes the sticky tail selection. Failed sends keep
-    // it intact so the user can retry without selecting the text again.
+    // A verified insertion completes the sticky tail selection. An unconfirmed
+    // Enter also clears it because submission may already have happened; other
+    // failures keep it intact so retrying remains convenient.
     m_view.ClearSelection();
 
-    std::wstring status = pressEnter ? L"Sent selection to " : L"Inserted selection in ";
+    if (result == WebInputSendResult::SubmissionUnconfirmed) {
+        SetStatus(detail);
+        return;
+    }
+
+    std::wstring status =
+        result == WebInputSendResult::Submitted ? L"Sent selection to "
+                                                : L"Inserted selection in ";
     status += m_webInputPicker.SelectedName();
-    status += pressEnter ? L" and pressed Enter." : L".";
+    status += result == WebInputSendResult::Submitted ? L" and confirmed submission." : L".";
     SetStatus(status);
 }
 
@@ -1587,10 +1596,7 @@ void MainWindow::FinishWindowPick(bool accept) {
 
         std::wstring status = L"Picked web tab: ";
         status += m_webInputPicker.SelectedName();
-        status += m_webInputPicker.SelectedClicksPoint()
-                     ? L". This browser hides its page from accessibility tools, so Send will "
-                       L"click the spot you picked before typing. Keep the input visible there."
-                     : L".";
+        status += L".";
         SetStatus(status);
     } else if (!accept) {
         SetStatus(L"Window picking cancelled.");
@@ -1615,23 +1621,13 @@ void MainWindow::ShowWindowPickStatus(WebInputPickState state) {
             SetStatus(status);
             return;
         }
-        case WebInputPickState::ValidByPoint: {
-            std::wstring status = L"Release on the message box to pick: ";
-            status += m_webInputPicker.CandidateName();
-            status += L". This browser hides its page, so the exact spot is used.";
-            SetStatus(status);
-            return;
-        }
         case WebInputPickState::OwnWindow:
             SetStatus(L"This app cannot be selected.");
             return;
-        case WebInputPickState::NoWebContent:
-            SetStatus(L"Drag onto the page itself, not the tab strip or address bar.");
-            return;
         case WebInputPickState::NoWebDocument:
             SetStatus(m_windowPickDrag
-                          ? L"Waiting for the browser's accessible page. Keep hovering over the tab."
-                          : L"No accessible web page. Open the chat tab in a browser window.");
+                          ? L"Drop unavailable: this browser does not expose an accessible web input."
+                          : L"No accessible web input. Open the chat tab in a supported browser.");
             return;
         case WebInputPickState::NoEditableInput:
             SetStatus(L"Drop unavailable: no enabled editable web input. Open the chat tab "

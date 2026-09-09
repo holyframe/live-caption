@@ -74,48 +74,20 @@ int main() {
     Check(!webinput::CanReuseInspection(nullptr, nullptr, 1001, checkedAt, false),
           "no-window hit never reuses a result");
 
-    Check(webinput::IsBrowserWindowClass(L"Chrome_WidgetWin_1"),
-          "Chromium browser shell recognised for the click fallback");
-    Check(webinput::IsBrowserWindowClass(L"MozillaWindowClass"),
-          "Firefox browser shell recognised for the click fallback");
-    Check(!webinput::IsBrowserWindowClass(L"Notepad"),
-          "ordinary application windows never get a blind click fallback");
-    Check(!webinput::IsBrowserWindowClass(L""), "missing class name is not a browser");
-    Check(webinput::IsWebContentWindowClass(L"Chrome_RenderWidgetHostHWND"),
-          "Chromium page surface recognised");
-    Check(!webinput::IsWebContentWindowClass(L"Chrome_WidgetWin_1"),
-          "browser shell is not mistaken for the page surface");
-
-    // A chat composer sits just above the bottom of the page viewport.
-    const RECT viewport{100, 100, 900, 700};
-    const POINT composer{500, 660};
-    const auto bottomAnchor = webinput::MakePickAnchor(viewport, composer);
-    Check(bottomAnchor.fromBottom && !bottomAnchor.fromRight && bottomAnchor.offsetY == 40,
-          "a point low in the viewport is remembered as an offset from the bottom");
-    POINT resolved = webinput::ResolvePickAnchor(viewport, bottomAnchor);
-    Check(resolved.x == composer.x && resolved.y == composer.y,
-          "an unchanged viewport resolves back to the picked point");
-    resolved = webinput::ResolvePickAnchor(RECT{300, 200, 1100, 800}, bottomAnchor);
-    Check(resolved.x == 700 && resolved.y == 760, "moving the window carries the point along");
-    resolved = webinput::ResolvePickAnchor(RECT{100, 100, 900, 900}, bottomAnchor);
-    Check(resolved.y == 860, "a taller window keeps the composer's distance from the bottom");
-    resolved = webinput::ResolvePickAnchor(RECT{100, 100, 300, 200}, bottomAnchor);
-    Check(resolved.x == 299 && resolved.y == 160,
-          "a viewport smaller than the offset still resolves inside itself");
-
-    const auto topAnchor = webinput::MakePickAnchor(viewport, POINT{150, 140});
-    Check(!topAnchor.fromBottom && !topAnchor.fromRight && topAnchor.offsetX == 50 &&
-              topAnchor.offsetY == 40,
-          "a point high in the viewport is remembered as an offset from the top left");
-    resolved = webinput::ResolvePickAnchor(RECT{100, 100, 1500, 1500}, topAnchor);
-    Check(resolved.x == 150 && resolved.y == 140,
-          "a growing window keeps a top-anchored point where it was");
-
-    const auto rightAnchor = webinput::MakePickAnchor(viewport, POINT{880, 660});
-    Check(rightAnchor.fromRight && rightAnchor.offsetX == 20,
-          "a point near the right edge is remembered as an offset from the right");
-    resolved = webinput::ResolvePickAnchor(RECT{100, 100, 1200, 700}, rightAnchor);
-    Check(resolved.x == 1180, "a wider window keeps a right-anchored point near the right edge");
+    Check(webinput::TextMatches(L"first\r\nsecond", L"first\nsecond"),
+          "read-back verification treats CRLF and LF as the same text");
+    Check(webinput::TextMatches(L"first\rsecond", L"first\nsecond"),
+          "read-back verification normalizes lone carriage returns");
+    Check(!webinput::TextMatches(L"caption", L"caption "),
+          "read-back verification does not ignore meaningful whitespace");
+    Check(!webinput::TextMatches(L"caption", L"different"),
+          "read-back verification rejects different input contents");
+    Check(webinput::TextMatches(L"", L""),
+          "an empty composer can confirm submission");
+    Check(webinput::ComposerIsEmpty(L"\r\n\t\u200B"),
+          "structural whitespace in an empty rich composer confirms submission");
+    Check(!webinput::ComposerIsEmpty(L"caption"),
+          "visible composer text does not confirm submission");
 
     std::printf("\nPicker validation: %d failures\n", failures);
     return failures ? 1 : 0;

@@ -6,6 +6,8 @@
 #include <uiautomation.h>
 
 #include <algorithm>
+#include <cwctype>
+#include <string>
 #include <string_view>
 
 namespace webinput {
@@ -48,50 +50,33 @@ inline bool CanReuseInspection(HWND window, HWND previous, ULONGLONG now,
            now - inspectedAt < kInspectionCacheMs;
 }
 
-// Top-level classes of browsers that render pages into a child surface. Such a
-// window may expose its own chrome (tabs, address bar) through UI Automation
-// while exposing nothing at all for the page, which is what happens when the
-// renderer is started with --disable-renderer-accessibility.
-inline bool IsBrowserWindowClass(std::wstring_view className) {
-    return className == L"Chrome_WidgetWin_1" ||   // Chrome, Edge, Chromium forks
-           className == L"Chrome_WidgetWin_0" ||
-           className == L"MozillaWindowClass";     // Firefox
+inline std::wstring NormalizeComparableText(std::wstring_view text) {
+    std::wstring normalized;
+    normalized.reserve(text.size());
+    for (size_t index = 0; index < text.size(); ++index) {
+        const wchar_t character = text[index];
+        if (character == L'\r') {
+            normalized.push_back(L'\n');
+            if (index + 1 < text.size() && text[index + 1] == L'\n') ++index;
+            continue;
+        }
+        normalized.push_back(character);
+    }
+    return normalized;
 }
 
-// The child window Chromium draws page content into. Its rectangle excludes the
-// tab strip and toolbar, so it tells us whether a pick landed on the page.
-inline bool IsWebContentWindowClass(std::wstring_view className) {
-    return className == L"Chrome_RenderWidgetHostHWND";
+inline bool TextMatches(std::wstring_view actual, std::wstring_view expected) {
+    return NormalizeComparableText(actual) == NormalizeComparableText(expected);
 }
 
-// A pick point remembered relative to the nearest edges of the page viewport.
-// Chat composers sit at the bottom of the page, so measuring from the closest
-// edge keeps the point on the composer when the window is later resized.
-struct PickAnchor {
-    LONG offsetX = 0;
-    LONG offsetY = 0;
-    bool fromRight = false;
-    bool fromBottom = false;
-};
-
-inline PickAnchor MakePickAnchor(const RECT& frame, POINT point) {
-    PickAnchor anchor;
-    const LONG width = frame.right - frame.left;
-    const LONG height = frame.bottom - frame.top;
-    anchor.fromRight = width > 0 && (point.x - frame.left) * 2 > width;
-    anchor.fromBottom = height > 0 && (point.y - frame.top) * 2 > height;
-    anchor.offsetX = anchor.fromRight ? frame.right - point.x : point.x - frame.left;
-    anchor.offsetY = anchor.fromBottom ? frame.bottom - point.y : point.y - frame.top;
-    return anchor;
-}
-
-inline POINT ResolvePickAnchor(const RECT& frame, const PickAnchor& anchor) {
-    POINT point{anchor.fromRight ? frame.right - anchor.offsetX : frame.left + anchor.offsetX,
-                anchor.fromBottom ? frame.bottom - anchor.offsetY : frame.top + anchor.offsetY};
-    // An anchored offset can fall outside a viewport that has since shrunk.
-    point.x = std::clamp(point.x, frame.left, (std::max)(frame.right - 1, frame.left));
-    point.y = std::clamp(point.y, frame.top, (std::max)(frame.bottom - 1, frame.top));
-    return point;
+inline bool ComposerIsEmpty(std::wstring_view text) {
+    for (const wchar_t character : text) {
+        if (!std::iswspace(static_cast<wint_t>(character)) &&
+            character != L'\u200B' && character != L'\uFEFF') {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace webinput
