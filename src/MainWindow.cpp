@@ -33,6 +33,10 @@ constexpr int kSendWidth    = 92;
 // Full-height strip along the right edge, reserved for control buttons.
 constexpr int kRightPanelWidth = 45;
 constexpr int kRightButtonSize = 32;
+// Extends the native title area into the client region. Besides creating
+// breathing room above the captions, this strip behaves like draggable title
+// bar space in normal view. Compact view intentionally omits it.
+constexpr int kTitleBarExtension = 14;
 // Fallback height for the log view when the font metrics are unavailable.
 constexpr int kLogHeight    = 22;
 // Draggable strip between the caption pane and the bottom panel, and the
@@ -456,6 +460,17 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                 (m_splitterDrag || ::PtInRect(&m_splitterRect, pt))) {
                 ::SetCursor(::LoadCursorW(nullptr, IDC_SIZENS));
                 return TRUE;
+            }
+            break;
+        }
+
+        case WM_NCHITTEST: {
+            if (!m_settings.compactView) {
+                POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                if (::ScreenToClient(m_hwnd, &point) && point.y >= 0 &&
+                    point.y < Scaled(kTitleBarExtension)) {
+                    return HTCAPTION;
+                }
             }
             break;
         }
@@ -1047,8 +1062,10 @@ void MainWindow::DrawSplitter(HDC dc) const {
 // leave a usable caption pane, whatever the window has been resized to.
 int MainWindow::ClampBottomPanelHeight(int wanted, int clientHeight) const {
     const int minimum = Scaled(kBarHeight);
+    const int titleBarExtension = m_settings.compactView ? 0 : Scaled(kTitleBarExtension);
     const int available =
-        clientHeight - LogBarHeight() - Scaled(kSplitterHeight) - Scaled(kMinViewHeight);
+        clientHeight - titleBarExtension - LogBarHeight() - Scaled(kSplitterHeight) -
+        Scaled(kMinViewHeight);
     return std::clamp(wanted, minimum, std::max(available, minimum));
 }
 
@@ -1091,6 +1108,7 @@ void MainWindow::Layout() {
     const int rowHeight = Scaled(kRowHeight);
     const int logHeight = LogBarHeight();
     const int splitterHeight = Scaled(kSplitterHeight);
+    const int titleBarExtension = m_settings.compactView ? 0 : Scaled(kTitleBarExtension);
     const int barHeight = ClampBottomPanelHeight(Scaled(m_settings.bottomPanelHeight), clientHeight);
 
     // The right panel runs the full height of the window. Everything else
@@ -1100,12 +1118,13 @@ void MainWindow::Layout() {
     const int columnWidth = std::max(clientWidth - rightPanelWidth, 0);
     const int logTop = std::max(clientHeight - logHeight, 0);
     const int barTop = std::max(logTop - barHeight, 0);
-    const int viewHeight = std::max(barTop - splitterHeight, 0);
+    const int viewBottom = std::max(barTop - splitterHeight, titleBarExtension);
+    const int viewHeight = std::max(viewBottom - titleBarExtension, 0);
 
-    m_splitterRect = RECT{0, viewHeight, columnWidth, barTop};
+    m_splitterRect = RECT{0, viewBottom, columnWidth, barTop};
 
     if (m_view.Handle()) {
-        ::SetWindowPos(m_view.Handle(), nullptr, 0, 0, columnWidth, viewHeight,
+        ::SetWindowPos(m_view.Handle(), nullptr, 0, titleBarExtension, columnWidth, viewHeight,
                        SWP_NOZORDER | SWP_NOACTIVATE);
     }
     // Both panels are backdrops, so keep them under their contents.
@@ -1116,20 +1135,21 @@ void MainWindow::Layout() {
     ::SetWindowPos(m_statusBar, nullptr, 0, logTop, columnWidth,
                    std::max(clientHeight - logTop, 0), SWP_NOZORDER | SWP_NOACTIVATE);
     if (m_rightPanel) {
-        ::SetWindowPos(m_rightPanel, HWND_BOTTOM, columnWidth, 0, rightPanelWidth, clientHeight,
-                       SWP_NOACTIVATE);
+        ::SetWindowPos(m_rightPanel, HWND_BOTTOM, columnWidth, titleBarExtension, rightPanelWidth,
+                       std::max(clientHeight - titleBarExtension, 0), SWP_NOACTIVATE);
     }
 
     // Right panel: picker at the top, selected target beneath it, settings at the foot.
     const int buttonSize = Scaled(kRightButtonSize);
     const int buttonLeft = columnWidth + std::max((rightPanelWidth - buttonSize) / 2, 0);
     if (m_pickWindowButton) {
-        ::SetWindowPos(m_pickWindowButton, nullptr, buttonLeft, pad, buttonSize, buttonSize,
-                       SWP_NOZORDER | SWP_NOACTIVATE);
+        ::SetWindowPos(m_pickWindowButton, nullptr, buttonLeft, titleBarExtension + pad,
+                       buttonSize, buttonSize, SWP_NOZORDER | SWP_NOACTIVATE);
     }
     if (m_selectedWindowIconView) {
-        ::SetWindowPos(m_selectedWindowIconView, nullptr, buttonLeft, pad + buttonSize + gap,
-                       buttonSize, buttonSize, SWP_NOZORDER | SWP_NOACTIVATE);
+        ::SetWindowPos(m_selectedWindowIconView, nullptr, buttonLeft,
+                       titleBarExtension + pad + buttonSize + gap, buttonSize, buttonSize,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
     }
     int rightButtonTop = std::max(clientHeight - pad - buttonSize, 0);
     if (m_settingsButton) {
