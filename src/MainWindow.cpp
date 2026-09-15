@@ -36,7 +36,7 @@ constexpr int kRightButtonSize = 32;
 // Extends the native title area into the client region. Besides creating
 // breathing room above the captions, this strip behaves like draggable title
 // bar space in normal view. Compact view intentionally omits it.
-constexpr int kTitleBarExtension = 14;
+constexpr int kTitleBarExtension = 28;
 // Fallback height for the log view when the font metrics are unavailable.
 constexpr int kLogHeight    = 22;
 // Draggable strip between the caption pane and the bottom panel, and the
@@ -72,6 +72,8 @@ constexpr UINT_PTR kHotkeySendTimerId = 0xCA51;
 constexpr UINT kHotkeySendPollMs = 10;
 constexpr UINT_PTR kWindowPickTimerId = 0xCA52;
 constexpr UINT kWindowPickPollMs = 50;
+constexpr UINT_PTR kActiveWindowFollowTimerId = 0xCA53;
+constexpr UINT kActiveWindowFollowPollMs = 10;
 
 int CALLBACK EnumFontProc(const LOGFONTW* logFont, const TEXTMETRICW*, DWORD, LPARAM param) {
     auto* names = reinterpret_cast<std::set<std::wstring>*>(param);
@@ -437,6 +439,11 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             ApplyTypography();
             ApplyViewMode();
 
+            if (::SetTimer(m_hwnd, kActiveWindowFollowTimerId, kActiveWindowFollowPollMs,
+                           nullptr) == 0) {
+                return -1;
+            }
+
             m_engine.Start(m_hwnd, m_settings.ResolvedTranscriptPath(), m_settings.pollIntervalMs,
                            ToSourceChoice(m_settings.captionSource));
             SetStatus(std::wstring(L"Saving transcript to ") + m_settings.ResolvedTranscriptPath());
@@ -572,6 +579,10 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             break;
 
         case WM_TIMER:
+            if (wParam == kActiveWindowFollowTimerId) {
+                m_activeWindowFollower.Poll();
+                return 0;
+            }
             if (wParam == kWindowPickTimerId) {
                 if (m_windowPickDrag && !m_windowPickUpdating) {
                     POINT point{};
@@ -646,6 +657,8 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         }
 
         case WM_DESTROY:
+            ::KillTimer(m_hwnd, kActiveWindowFollowTimerId);
+            m_activeWindowFollower.Stop();
             ::KillTimer(m_hwnd, kWindowPickTimerId);
             if (m_hotkeySendPending) {
                 ::KillTimer(m_hwnd, kHotkeySendTimerId);

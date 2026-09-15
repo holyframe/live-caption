@@ -39,6 +39,12 @@ Start Chrome's Live Caption or Windows 11's Live captions, then launch
 `LiveCaptionView.exe`. It polls for a supported caption window and attaches
 automatically; if the source closes, it reconnects on its own.
 
+Hold **Left Shift by itself** to grab the current foreground window at the
+pointer's existing offset. The window follows the pointer until Left Shift is
+released or another keyboard key is pressed. Switching foreground windows while
+Left Shift remains held starts a fresh grab without making the newly active
+window jump. Minimized and maximized windows are left unchanged.
+
 The window is split into a full-height right panel, reserved for control
 buttons, and a column beside it holding the caption pane, the toolbar's bottom
 panel, and the log view along the foot. The log view reports which source is

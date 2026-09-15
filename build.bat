@@ -43,6 +43,7 @@ if errorlevel 1 exit /b 1
 echo === Compiling sources ===
 cl %CFLAGS% /c ^
     src\main.cpp ^
+    src\ActiveWindowFollower.cpp ^
     src\Util.cpp ^
     src\Settings.cpp ^
     src\SettingsDialog.cpp ^

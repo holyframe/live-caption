@@ -11,6 +11,7 @@ endif()
 
 add_executable(LiveCaptionView WIN32
     src/main.cpp
+    src/ActiveWindowFollower.cpp
     src/Util.cpp
     src/Settings.cpp
     src/SettingsDialog.cpp

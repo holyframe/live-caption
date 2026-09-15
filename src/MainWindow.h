@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "ActiveWindowFollower.h"
 #include "CaptionView.h"
 #include "CaptureEngine.h"
 #include "Settings.h"
@@ -128,6 +129,7 @@ private:
     CaptionView   m_view;
     CaptureEngine m_engine;
     Settings      m_settings;
+    ActiveWindowFollower m_activeWindowFollower;
 
     ULONGLONG m_lastRealtimeCopyTick = 0;
 };

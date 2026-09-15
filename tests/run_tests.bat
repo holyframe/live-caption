@@ -61,6 +61,25 @@ if not "%RESULT%"=="0" (
 echo.
 cl /nologo /std:c++20 /W4 /permissive- /utf-8 /EHsc /MT /O2 ^
    /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
+   /I src tests\active_window_follower_test.cpp src\ActiveWindowFollower.cpp ^
+   /Fo"%OBJDIR%\\" /Fe"build\active_window_follower_test.exe" ^
+   /link user32.lib
+if errorlevel 1 (
+    popd
+    exit /b 1
+)
+
+echo.
+build\active_window_follower_test.exe
+set "RESULT=%ERRORLEVEL%"
+if not "%RESULT%"=="0" (
+    popd
+    exit /b %RESULT%
+)
+
+echo.
+cl /nologo /std:c++20 /W4 /permissive- /utf-8 /EHsc /MT /O2 ^
+   /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX ^
    /I src ^
    tests\caption_save_test.cpp src\CaptionSave.cpp ^
    /Fo"%OBJDIR%\\" /Fe"build\caption_save_test.exe"
