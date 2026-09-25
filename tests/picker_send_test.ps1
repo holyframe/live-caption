@@ -92,15 +92,20 @@ function Wait-TitleContains($browser, [string]$text) {
 }
 
 function Page-Center([IntPtr]$window) {
-    $content = [VerifiedSend]::Content($window)
-    if (($content.R - $content.L) -le 0) { throw 'Could not locate the browser page area.' }
-    $point = New-Object VerifiedSend+Point
-    $point.X = [int](($content.L + $content.R) / 2)
-    $point.Y = [int](($content.T + $content.B) / 2)
-    if ([VerifiedSend]::GetAncestor([VerifiedSend]::WindowFromPoint($point), 2) -ne $window) {
-        throw 'Another window covered the test fixture.'
-    }
-    return $point
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        $content = [VerifiedSend]::Content($window)
+        if (($content.R - $content.L) -gt 0) {
+            $point = New-Object VerifiedSend+Point
+            $point.X = [int](($content.L + $content.R) / 2)
+            $point.Y = [int](($content.T + $content.B) / 2)
+            if ([VerifiedSend]::GetAncestor([VerifiedSend]::WindowFromPoint($point), 2) -eq $window) {
+                return $point
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Could not locate an unobscured browser page area.'
 }
 
 [void][VerifiedSend]::SetThreadDpiAwarenessContext([IntPtr](-4))
@@ -123,7 +128,7 @@ try {
     # 4 = Valid, 1 = Inserted.
     $insert = & (Join-Path $repo 'build\picker_send_probe.exe') $window.ToInt64() $point.X $point.Y 4 'verified insert' 0
     $insertExit = $LASTEXITCODE
-    Check ($insertExit -eq 0) 'verified keyboard insertion succeeds'
+    Check ($insertExit -eq 0) 'verified atomic insertion succeeds'
     Check ([bool]($insert | Select-String -SimpleMatch 'outcome=1 sent=1')) 'insertion reports the Inserted outcome'
     Check (Wait-TitleContains $browser 'live=verified insert') 'appended text is observable in the exact composer'
 
@@ -133,6 +138,17 @@ try {
     Check ($submitExit -eq 0) 'verified Enter submission succeeds'
     Check ([bool]($submit | Select-String -SimpleMatch 'outcome=2 sent=1')) 'submission reports the Submitted outcome'
     Check (Wait-TitleContains $browser 'live= last=verified insertverified submit') 'submission preserves existing text and clears the composer'
+
+    # A long caption must not regress to thousands of visible key events.
+    $longCaption = 'fast-' + ('x' * 4096)
+    $fastSend = & (Join-Path $repo 'build\picker_send_probe.exe') $window.ToInt64() $point.X $point.Y 4 $longCaption 1
+    $fastExit = $LASTEXITCODE
+    $fastOutput = $fastSend -join "`n"
+    $timing = [regex]::Match($fastOutput, 'took=(\d+)ms')
+    Check ($fastExit -eq 0) 'long caption insertion and submission succeed'
+    Check ($timing.Success) 'long caption probe reports its send time'
+    Check ($timing.Success -and [int]$timing.Groups[1].Value -lt 1000) '4096-character caption is delivered atomically in under one second'
+    if ($timing.Success) { Write-Output "Atomic long-caption send: $($timing.Groups[1].Value) ms" }
 
     [VerifiedSend]::SelectTab($window, 0x31)
     [void](Wait-BrowserWindow $browser 'Picker test fixture fill')

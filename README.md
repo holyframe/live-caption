@@ -58,7 +58,7 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 
 | Control | Behaviour |
 | --- | --- |
-| **Send** | Replaces the picked web tab's chat input with the selected caption text. |
+| **Send** | Appends the selected caption text to the picked web tab's chat input. |
 | **Press Enter** | Also presses Enter in the picked chat input after inserting the selection. Enter in this app triggers Send when checked. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
 | **Save** (right panel) | Opens Save As with `{save time} - {picked tab name}.txt` prefilled. |
@@ -105,10 +105,12 @@ tile beneath the picker. Browsers that hide their page or input from
 accessibility tools are rejected because the app cannot prove where text and
 Enter would be delivered.
 Click Send after selecting text in the caption pane. The app reactivates the
-retained browser tab, confirms the exact retained chat input, moves its caret
-to the end, and appends the selection with real keyboard input without erasing
-an existing draft. When Press Enter is checked, Enter follows the caption in
-the same keyboard batch and submission is confirmed by the composer clearing;
+retained browser tab, confirms the exact retained chat input, and appends the
+selection without erasing an existing draft. Chromium inputs that expose a
+writable value receive the complete text in one atomic accessibility operation
+that dispatches Chromium's normal input/change events. Editors without that
+capability fall back to full keyboard input. When Press Enter is checked, Enter
+remains a real key event and submission is confirmed by the composer clearing;
 otherwise the combined input value is read back before success is reported.
 If a page contains several editable fields, release directly over the desired
 chat composer to select it instead of the automatically preferred field.
@@ -166,18 +168,22 @@ input to remain visible and writable. It never substitutes another editable
 field after navigation, a tab change, or a page re-render; the user is asked to
 pick again instead.
 
-The exact input receives focus, its current value is read, and one keyboard
-batch moves to the end and appends the caption. Without Press Enter, Send reads
-the combined input through UI Automation and compares the result, normalizing
-only Windows/HTML newline forms. If focus changed or the text does not match,
-the operation is not reported as successful.
+The exact input receives focus and its current value is read. For Chromium
+inputs with writable `ValuePattern`, the combined value is set atomically;
+Chromium dispatches its normal input/change events for that accessibility
+action, avoiding thousands of visibly typed key events. Unsupported editors
+use the original full-keyboard fallback. Without Press Enter, Send reads the
+combined input through UI Automation and compares the result, normalizing only
+Windows/HTML newline forms. If focus changed or the text does not match, the
+operation is not reported as successful.
 
-With Press Enter checked, Enter is queued in that same batch so the browser
-cannot lose focus in a gap between text and submission. The app then waits for
-the exact composer to become empty, including the structural whitespace used
-by empty rich-text editors. If clearing cannot be observed, the status says
-submission is unconfirmed and the caption selection is cleared to prevent an
-accidental duplicate send.
+With Press Enter checked, the exact input's focus is rechecked after an atomic
+update and Enter is then sent as a real key; on the keyboard fallback it stays
+in the same batch as the text. The app then waits for the exact composer to
+become empty, including the structural whitespace used by empty rich-text
+editors. If clearing cannot be observed, the status says submission is
+unconfirmed and the caption selection is cleared to prevent an accidental
+duplicate send.
 
 #### Picker tests
 

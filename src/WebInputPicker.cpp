@@ -217,10 +217,11 @@ bool InjectEvents(const std::vector<INPUT>& events) {
                        sizeof(INPUT)) == events.size();
 }
 
-// Collapses any selection at the end of the composer, appends the caption, and
-// optionally presses Enter in one injection. Keeping Enter in the same batch
-// closes the focus gap that can otherwise leave a caption in the field without
-// submitting it. Ctrl+End preserves all text that was already present.
+// Collapses any selection at the end of the composer, appends the supplied
+// text, and optionally presses Enter in one injection. The atomic fast path
+// needs this only for Enter; unsupported editors fall back to the full caption.
+// Keeping Enter in the fallback's text batch closes the focus gap that can
+// otherwise leave a caption in the field without submitting it.
 bool AppendWithKeyboard(const std::wstring& text, bool pressEnter) {
     std::vector<INPUT> events;
     events.reserve(text.size() * 2 + 24);
@@ -769,6 +770,58 @@ struct PickerAutomation {
         return false;
     }
 
+    enum class AtomicAppendResult { Unavailable, Ready, Failed };
+
+    AtomicAppendResult PrepareAtomicAppend(const std::wstring& previousText,
+                                           const std::wstring& appendedText,
+                                           std::wstring& keyboardText,
+                                           std::wstring& error) {
+        keyboardText = appendedText;
+        if (!selected.input) return AtomicAppendResult::Unavailable;
+
+        ComPtr<IUnknown> unknown;
+        if (FAILED(selected.input->GetCurrentPattern(UIA_ValuePatternId, &unknown)) || !unknown) {
+            return AtomicAppendResult::Unavailable;
+        }
+        ComPtr<IUIAutomationValuePattern> pattern;
+        if (FAILED(unknown.As(&pattern)) || !pattern) return AtomicAppendResult::Unavailable;
+
+        BOOL readOnly = TRUE;
+        if (FAILED(pattern->get_CurrentIsReadOnly(&readOnly)) || readOnly) {
+            return AtomicAppendResult::Unavailable;
+        }
+
+        std::wstring combined = previousText;
+        combined += appendedText;
+        BSTR value = ::SysAllocStringLen(combined.data(), static_cast<UINT>(combined.size()));
+        const HRESULT set = value ? pattern->SetValue(value) : E_OUTOFMEMORY;
+        ::SysFreeString(value);
+        if (SUCCEEDED(set) && WaitForSelectedText(combined, kFocusTimeoutMs)) {
+            // SetValue is synchronous from UI Automation's perspective, but
+            // let Chromium drain the renderer work it triggered before a
+            // possible Enter key follows.
+            WaitForMessagesProcessed(selected.hwnd);
+            if (!WaitForExactInputFocus()) {
+                error = L"The exact picked input lost focus while the caption was being "
+                        L"inserted. Pick it again before retrying.";
+                return AtomicAppendResult::Failed;
+            }
+            keyboardText.clear();
+            return AtomicAppendResult::Ready;
+        }
+
+        // SetValue can fail after crossing the process boundary. Only fall
+        // back to typing when the original draft is provably untouched;
+        // otherwise a retry could duplicate or corrupt user text.
+        std::wstring actual;
+        if (ReadSelectedText(actual) && webinput::TextMatches(actual, previousText)) {
+            return AtomicAppendResult::Unavailable;
+        }
+        error = L"The picked input changed while the caption was being prepared. Check it "
+                L"before retrying.";
+        return AtomicAppendResult::Failed;
+    }
+
     bool WaitForSelectedText(const std::wstring& expected, DWORD timeoutMs) {
         return WaitUntil(
             [this, &expected] {
@@ -849,11 +902,16 @@ struct PickerAutomation {
         std::wstring expectedText = previousText;
         expectedText += text;
 
-        // Real keystrokes give Chromium and page frameworks their normal input
-        // events. The existing value was read first and Ctrl+End only collapses
-        // the selection, so an existing draft is never erased. Enter shares
-        // this batch to keep focus from changing between insertion and submit.
-        if (!AppendWithKeyboard(text, pressEnter)) {
+        std::wstring keyboardText;
+        const auto atomic = PrepareAtomicAppend(previousText, text, keyboardText, message);
+        if (atomic == AtomicAppendResult::Failed) return WebInputSendResult::Failed;
+
+        // Chromium's accessibility SetValue action applies writable values in
+        // one renderer operation and dispatches input/change events. Editors
+        // that cannot set values atomically retain the compatible full-key
+        // path. Enter remains a real key event in either case.
+        if ((!keyboardText.empty() || pressEnter) &&
+            !AppendWithKeyboard(keyboardText, pressEnter)) {
             message = pressEnter
                           ? L"Windows could not append the caption and press Enter in the picked "
                             L"input. An elevated target may require this app to run as "
