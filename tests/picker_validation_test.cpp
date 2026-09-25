@@ -82,6 +82,16 @@ int main() {
           "read-back verification does not ignore meaningful whitespace");
     Check(!webinput::TextMatches(L"caption", L"different"),
           "read-back verification rejects different input contents");
+    Check(webinput::RemoveAccessibleNamePrefix(L"Ask ChatGPT", L"Ask ChatGPT").empty(),
+          "an accessibility value containing only its name is an empty composer");
+    Check(webinput::RemoveAccessibleNamePrefix(L"Ask ChatGPT \r\ncaption", L"Ask ChatGPT") ==
+              L"caption",
+          "an accessibility name and whitespace are removed from real composer text");
+    Check(webinput::RemoveAccessibleNamePrefix(L"caption", L"Ask ChatGPT") == L"caption",
+          "ordinary composer text is preserved");
+    Check(webinput::RemoveAccessibleNamePrefix(L"Ask ChatGPTting", L"Ask ChatGPT") ==
+              L"Ask ChatGPTting",
+          "matching text without a separator is not mistaken for an accessible prefix");
     Check(webinput::TextMatches(L"", L""),
           "an empty composer can confirm submission");
     Check(webinput::ComposerIsEmpty(L"\r\n\t\u200B"),

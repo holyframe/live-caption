@@ -69,6 +69,23 @@ inline bool TextMatches(std::wstring_view actual, std::wstring_view expected) {
     return NormalizeComparableText(actual) == NormalizeComparableText(expected);
 }
 
+inline std::wstring RemoveAccessibleNamePrefix(std::wstring_view value,
+                                               std::wstring_view accessibleName) {
+    if (accessibleName.empty() || !value.starts_with(accessibleName)) {
+        return std::wstring(value);
+    }
+    size_t contentStart = accessibleName.size();
+    if (contentStart == value.size()) return {};
+
+    const size_t separatorStart = contentStart;
+    while (contentStart < value.size() &&
+           std::iswspace(static_cast<wint_t>(value[contentStart]))) {
+        ++contentStart;
+    }
+    if (contentStart == separatorStart) return std::wstring(value);
+    return std::wstring(value.substr(contentStart));
+}
+
 inline bool ComposerIsEmpty(std::wstring_view text) {
     for (const wchar_t character : text) {
         if (!std::iswspace(static_cast<wint_t>(character)) &&

@@ -4,6 +4,7 @@
 <style>
   body { font: 18px sans-serif; margin: 40px; }
   textarea, input, [contenteditable] { width: 80%; min-height: 80px; border: 1px solid #777; }
+  [contenteditable][data-placeholder]:empty::before { content: attr(data-placeholder); color: #777; }
   /* The "fill" case covers the viewport so any point inside the page area is
      inside the input. Tests that cannot read the page can then click blind. */
   #fixture.fill { position: fixed; inset: 0; margin: 0; }
@@ -74,6 +75,8 @@ function addInput() {
 }
 if (scenario === 'rich') {
     host.innerHTML = '<div contenteditable="true" role="textbox" aria-label="Chat message">rich draft|</div>';
+} else if (scenario === 'placeholder') {
+    host.innerHTML = '<div contenteditable="true" role="textbox" aria-label="Ask ChatGPT" data-placeholder="Ask ChatGPT"></div>';
 } else if (scenario === 'delayed') {
     setTimeout(addInput, 2500);
 } else if (scenario === 'fill') {

@@ -113,7 +113,7 @@ $fixture = [Uri]::new((Join-Path $PSScriptRoot 'picker_fixture.html')).AbsoluteU
 $profileDir = Join-Path $repo ('build\picker-send-test-' + [Guid]::NewGuid().ToString('N'))
 $browser = $null
 try {
-    $arguments = @('--user-data-dir="' + $profileDir + '"', '--no-first-run', '--no-default-browser-check', '--disable-background-mode', '--disable-sync', '--disable-extensions', '--new-window', ($fixture + '?case=fill'), ($fixture + '?case=empty'), ($fixture + '?case=rich'))
+    $arguments = @('--user-data-dir="' + $profileDir + '"', '--no-first-run', '--no-default-browser-check', '--disable-background-mode', '--disable-sync', '--disable-extensions', '--new-window', ($fixture + '?case=fill'), ($fixture + '?case=empty'), ($fixture + '?case=rich'), ($fixture + '?case=placeholder'))
     $browser = Start-Process -FilePath $BrowserPath -ArgumentList $arguments -PassThru
     Start-Sleep -Milliseconds 700
     $browser.Refresh()
@@ -167,6 +167,15 @@ try {
     Check ($richExit -eq 0) 'contenteditable insertion and submission are verified'
     Check ([bool]($richSend | Select-String -SimpleMatch 'outcome=2 sent=1')) 'contenteditable send reports the Submitted outcome'
     Check (Wait-TitleContains $browser 'live= last=rich draft|rich submit') 'contenteditable submission preserves its draft and clears the composer'
+
+    [VerifiedSend]::SelectTab($window, 0x34)
+    $window = Wait-BrowserWindow $browser 'Picker test fixture placeholder'
+    $point = Page-Center $window
+    $placeholderSend = & (Join-Path $repo 'build\picker_send_probe.exe') $window.ToInt64() $point.X $point.Y 4 'placeholder clean' 1
+    $placeholderExit = $LASTEXITCODE
+    Check ($placeholderExit -eq 0) 'placeholder composer insertion and submission are verified'
+    Check ([bool]($placeholderSend | Select-String -SimpleMatch 'outcome=2 sent=1')) 'placeholder composer reports the Submitted outcome'
+    Check (Wait-TitleContains $browser 'live= last=placeholder clean') 'accessible placeholder is not inserted into the submitted caption'
 } finally {
     if ($browser) {
         $browser.Refresh()

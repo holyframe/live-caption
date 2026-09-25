@@ -736,6 +736,10 @@ struct PickerAutomation {
         value.clear();
         if (!selected.input) return false;
 
+        // Chromium can prefix an empty composer's accessible name (for example
+        // "Ask ChatGPT") to the value returned by either pattern. Remove that
+        // duplicated label before treating the remainder as an existing draft.
+        const std::wstring accessibleName = ElementName(selected.input.Get());
         ComPtr<IUnknown> unknown;
         if (SUCCEEDED(selected.input->GetCurrentPattern(UIA_ValuePatternId, &unknown)) && unknown) {
             ComPtr<IUIAutomationValuePattern> pattern;
@@ -743,7 +747,8 @@ struct PickerAutomation {
                 BSTR text = nullptr;
                 const HRESULT read = pattern->get_CurrentValue(&text);
                 if (SUCCEEDED(read)) {
-                    value = BstrToString(text);
+                    value = webinput::RemoveAccessibleNamePrefix(BstrToString(text),
+                                                                 accessibleName);
                     ::SysFreeString(text);
                     return true;
                 }
@@ -760,7 +765,8 @@ struct PickerAutomation {
                 BSTR text = nullptr;
                 const HRESULT read = range->GetText(-1, &text);
                 if (SUCCEEDED(read)) {
-                    value = BstrToString(text);
+                    value = webinput::RemoveAccessibleNamePrefix(BstrToString(text),
+                                                                 accessibleName);
                     ::SysFreeString(text);
                     return true;
                 }
