@@ -59,6 +59,10 @@ public:
     const std::wstring& SelectedName() const;
     void ClearSelected();
 
+    // Selects the retained browser tab when possible, restores its window, and
+    // brings it to the foreground without focusing or changing the picked input.
+    bool ActivateSelectedWindow(std::wstring& error);
+
     // Asks Windows to bring the retained target forward. Send already does
     // this, but Windows only grants the request to a process it considers to
     // have received the last input event, and a global hotkey grants that for

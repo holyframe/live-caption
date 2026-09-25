@@ -210,10 +210,10 @@ int main() {
     view.QueueUpdate(0, lines);
     view.Present();
 
-    // Geometry: the line-select gutter is 75 device pixels at 96 dpi, and this
+    // Geometry: the line-select gutter is 120 device pixels at 96 dpi, and this
     // process is dpi-unaware, so a point just past it lands on the first glyph.
     constexpr int kGutterX = 10;
-    constexpr int kFirstGlyphX = 76;
+    constexpr int kFirstGlyphX = 121;
     constexpr int kFirstGlyphY = 14;
     constexpr int kPastEndY = 20000;
     // Rough Y of later rows at 14pt / 1.3 spacing. Line 1 wraps onto a second

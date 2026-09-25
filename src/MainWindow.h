@@ -65,6 +65,7 @@ private:
     void FinishWindowPick(bool accept);
     void ShowWindowPickStatus(WebInputPickState state);
     void UpdatePickedWindowIcon(HWND window);
+    void ActivatePickedWindow();
     void BeginSelectedIconRemoval();
     void UpdateSelectedIconRemoval(POINT screenPoint);
     void FinishSelectedIconRemoval(bool accept);

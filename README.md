@@ -79,7 +79,7 @@ selection is implemented directly on it:
 | Drag | Selects across lines. Dragging past the top or bottom edge scrolls. |
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
-| Left gutter (75px) | Click a row to select from that line through the end of the transcript. The selection keeps growing with new captions until it is cleared or sent. Drag to select a fixed range of whole lines. Arrow cursor; the row under the pointer lights up. |
+| Left gutter (120px) | Click a row to select from that line through the end of the transcript. The selection keeps growing with new captions until it is cleared or sent. Drag to select a fixed range of whole lines. Arrow cursor; the row under the pointer lights up. |
 | Right panel (45px) | Full-height strip with Pick window and the selected target icon at the top, plus listening, Save, Clear, and Settings controls at the bottom. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
@@ -104,6 +104,8 @@ document and input element, and displays the target window's icon in a separate
 tile beneath the picker. Browsers that hide their page or input from
 accessibility tools are rejected because the app cannot prove where text and
 Enter would be delivered.
+Left-click the selected target icon to reactivate that browser tab and bring its
+window to the front. Right-drag the icon outside the app to forget the target.
 Click Send after selecting text in the caption pane. The app reactivates the
 retained browser tab, confirms the exact retained chat input, and appends the
 selection without erasing an existing draft. Chromium inputs that expose a

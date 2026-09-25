@@ -886,6 +886,30 @@ struct PickerAutomation {
         return true;
     }
 
+    bool ActivateSelectedWindow(std::wstring& error) {
+        error.clear();
+        if (!selected.hwnd || !::IsWindow(selected.hwnd)) {
+            error = L"The picked window has closed. Pick a web tab again.";
+            return false;
+        }
+        DWORD processId = 0;
+        ::GetWindowThreadProcessId(selected.hwnd, &processId);
+        if (!processId || processId != selected.processId) {
+            error = L"The picked browser window has been replaced. Pick the tab again.";
+            return false;
+        }
+
+        bool switchedTab = false;
+        if (!SelectRetainedBrowserTab(switchedTab, error)) return false;
+        if (!ActivateWindow(selected.hwnd) || !WaitForSelectedActive(error)) return false;
+
+        if (switchedTab) {
+            WaitForMessagesProcessed(selected.hwnd);
+            ::Sleep(kTabSettleMs);
+        }
+        return true;
+    }
+
     WebInputSendResult SendText(const std::wstring& text, bool pressEnter,
                                 std::wstring& message) {
         message.clear();
@@ -1229,6 +1253,11 @@ HWND WebInputPicker::SelectedWindow() const {
 
 const std::wstring& WebInputPicker::SelectedName() const {
     return m_impl->snapshot.selectedName;
+}
+
+bool WebInputPicker::ActivateSelectedWindow(std::wstring& error) {
+    return m_impl->Invoke(
+        [&error](PickerAutomation& automation) { return automation.ActivateSelectedWindow(error); });
 }
 
 void WebInputPicker::RaiseSelectedWindow() {

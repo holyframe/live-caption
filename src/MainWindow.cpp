@@ -319,6 +319,13 @@ LRESULT CALLBACK MainWindow::SelectedIconSubclassProc(HWND hwnd, UINT message, W
     if (!self) return ::DefSubclassProc(hwnd, message, wParam, lParam);
 
     switch (message) {
+        case WM_LBUTTONUP:
+            if (!self->m_selectedIconRemoveDrag && self->m_webInputPicker.SelectedWindow()) {
+                self->ActivatePickedWindow();
+                return 0;
+            }
+            break;
+
         case WM_RBUTTONDOWN:
             if (self->m_webInputPicker.SelectedWindow()) {
                 ::SetFocus(hwnd);
@@ -350,6 +357,10 @@ LRESULT CALLBACK MainWindow::SelectedIconSubclassProc(HWND hwnd, UINT message, W
             if (self->m_selectedIconRemoveDrag) {
                 const LPCWSTR cursor = self->m_selectedIconOutside ? IDC_HAND : IDC_SIZEALL;
                 ::SetCursor(::LoadCursorW(nullptr, cursor));
+                return TRUE;
+            }
+            if (self->m_webInputPicker.SelectedWindow()) {
+                ::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
                 return TRUE;
             }
             break;
@@ -1677,6 +1688,19 @@ void MainWindow::UpdatePickedWindowIcon(HWND window) {
     if (!icon) return;
     if (m_pickedWindowIcon) ::DestroyIcon(m_pickedWindowIcon);
     m_pickedWindowIcon = icon;
+}
+
+void MainWindow::ActivatePickedWindow() {
+    std::wstring error;
+    if (!m_webInputPicker.ActivateSelectedWindow(error)) {
+        SetStatus(error.empty() ? L"Could not bring the picked tab to the front." : error);
+        return;
+    }
+
+    std::wstring status = L"Brought picked tab to the front: ";
+    status += m_webInputPicker.SelectedName();
+    status += L".";
+    SetStatus(status);
 }
 
 void MainWindow::BeginSelectedIconRemoval() {

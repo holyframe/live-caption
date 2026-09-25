@@ -27,7 +27,7 @@ constexpr D2D1_COLOR_F kLightGutterHover = {238.0f / 255.0f, 238.0f / 255.0f,
 // Left strip is the line-select gutter; a modest right margin keeps glyphs off
 // the scrollbar. The control-button panel lives outside this pane, to the right
 // of the scrollbar.
-constexpr float kGutterDip = 75.0f;
+constexpr float kGutterDip = 120.0f;
 constexpr float kMarginRightDip = 14.0f;
 constexpr float kMarginYDip = 10.0f;
 
