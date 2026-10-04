@@ -30,9 +30,9 @@ constexpr int kBarBottomPad = 5;
 constexpr int kBarHeight    = kBarTopPad + kRowHeight + kBarBottomPad;
 constexpr int kGap          = 6;
 constexpr int kSendWidth    = 92;
-// Full-height strip along the right edge, reserved for control buttons.
-constexpr int kRightPanelWidth = 45;
-constexpr int kRightButtonSize = 32;
+// Full-height strip along the left edge, reserved for control buttons.
+constexpr int kSidePanelWidth = 45;
+constexpr int kSideButtonSize = 32;
 // Extends the native title area into the client region. Besides creating
 // breathing room above the captions, this strip behaves like draggable title
 // bar space in normal view. Compact view intentionally omits it.
@@ -1135,37 +1135,38 @@ void MainWindow::Layout() {
     const int titleBarExtension = m_settings.compactView ? 0 : Scaled(kTitleBarExtension);
     const int barHeight = ClampBottomPanelHeight(Scaled(m_settings.bottomPanelHeight), clientHeight);
 
-    // The right panel runs the full height of the window. Everything else
-    // stacks inside the column left of it: caption pane, splitter, bottom
+    // The side panel runs down the left edge. Everything else stacks inside
+    // the column to its right: caption pane, splitter, bottom
     // panel, log view.
-    const int rightPanelWidth = Scaled(kRightPanelWidth);
-    const int columnWidth = std::max(clientWidth - rightPanelWidth, 0);
+    const int sidePanelWidth = Scaled(kSidePanelWidth);
+    const int columnLeft = sidePanelWidth;
+    const int columnWidth = std::max(clientWidth - columnLeft, 0);
     const int logTop = std::max(clientHeight - logHeight, 0);
     const int barTop = std::max(logTop - barHeight, 0);
     const int viewBottom = std::max(barTop - splitterHeight, titleBarExtension);
     const int viewHeight = std::max(viewBottom - titleBarExtension, 0);
 
-    m_splitterRect = RECT{0, viewBottom, columnWidth, barTop};
+    m_splitterRect = RECT{columnLeft, viewBottom, clientWidth, barTop};
 
     if (m_view.Handle()) {
-        ::SetWindowPos(m_view.Handle(), nullptr, 0, titleBarExtension, columnWidth, viewHeight,
-                       SWP_NOZORDER | SWP_NOACTIVATE);
+        ::SetWindowPos(m_view.Handle(), nullptr, columnLeft, titleBarExtension, columnWidth,
+                       viewHeight, SWP_NOZORDER | SWP_NOACTIVATE);
     }
     // Both panels are backdrops, so keep them under their contents.
     if (m_bottomPanel) {
-        ::SetWindowPos(m_bottomPanel, HWND_BOTTOM, 0, barTop, columnWidth,
+        ::SetWindowPos(m_bottomPanel, HWND_BOTTOM, columnLeft, barTop, columnWidth,
                        std::max(logTop - barTop, 0), SWP_NOACTIVATE);
     }
-    ::SetWindowPos(m_statusBar, nullptr, 0, logTop, columnWidth,
+    ::SetWindowPos(m_statusBar, nullptr, columnLeft, logTop, columnWidth,
                    std::max(clientHeight - logTop, 0), SWP_NOZORDER | SWP_NOACTIVATE);
     if (m_rightPanel) {
-        ::SetWindowPos(m_rightPanel, HWND_BOTTOM, columnWidth, titleBarExtension, rightPanelWidth,
+        ::SetWindowPos(m_rightPanel, HWND_BOTTOM, 0, titleBarExtension, sidePanelWidth,
                        std::max(clientHeight - titleBarExtension, 0), SWP_NOACTIVATE);
     }
 
-    // Right panel: picker at the top, selected target beneath it, settings at the foot.
-    const int buttonSize = Scaled(kRightButtonSize);
-    const int buttonLeft = columnWidth + std::max((rightPanelWidth - buttonSize) / 2, 0);
+    // Left panel: picker at the top, selected target beneath it.
+    const int buttonSize = Scaled(kSideButtonSize);
+    const int buttonLeft = std::max((sidePanelWidth - buttonSize) / 2, 0);
     if (m_pickWindowButton) {
         ::SetWindowPos(m_pickWindowButton, nullptr, buttonLeft, titleBarExtension + pad,
                        buttonSize, buttonSize, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -1175,41 +1176,28 @@ void MainWindow::Layout() {
                        titleBarExtension + pad + buttonSize + gap, buttonSize, buttonSize,
                        SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    int rightButtonTop = std::max(clientHeight - pad - buttonSize, 0);
-    if (m_settingsButton) {
-        ::SetWindowPos(m_settingsButton, nullptr, buttonLeft, rightButtonTop, buttonSize,
-                       buttonSize, SWP_NOZORDER | SWP_NOACTIVATE);
-    }
-    rightButtonTop -= buttonSize + gap;
-    if (m_clearButton) {
-        ::SetWindowPos(m_clearButton, nullptr, buttonLeft, rightButtonTop, buttonSize, buttonSize,
-                       SWP_NOZORDER | SWP_NOACTIVATE);
-    }
-    rightButtonTop -= buttonSize + gap;
-    if (m_saveButton) {
-        ::SetWindowPos(m_saveButton, nullptr, buttonLeft, rightButtonTop, buttonSize, buttonSize,
-                       SWP_NOZORDER | SWP_NOACTIVATE);
-    }
-    rightButtonTop -= buttonSize + gap;
-    if (m_listenButton) {
-        ::SetWindowPos(m_listenButton, nullptr, buttonLeft, rightButtonTop, buttonSize, buttonSize,
-                       SWP_NOZORDER | SWP_NOACTIVATE);
-    }
-
     // The toolbar hugs the foot of the bottom panel. A taller panel then opens
     // space under the splitter rather than carrying the controls up with it, so
     // they stay under the pointer while the caption pane is being resized.
     const int rowTop =
         std::max(logTop - Scaled(kBarBottomPad) - rowHeight, barTop + Scaled(kBarTopPad));
 
-    // Left block: Send with the Press Enter option beside it.
-    int left = pad;
+    // Left block: Send, Press Enter, then the requested action-icon order.
+    int left = columnLeft + pad;
     ::SetWindowPos(m_sendButton, nullptr, left, rowTop, Scaled(kSendWidth), rowHeight,
                    SWP_NOZORDER | SWP_NOACTIVATE);
     left += Scaled(kSendWidth) + gap;
     ::SetWindowPos(m_pressEnterCheck, nullptr, left, rowTop, Scaled(96), rowHeight,
                    SWP_NOZORDER | SWP_NOACTIVATE);
-    const int leftBlockEnd = left + Scaled(96) + gap;
+    left += Scaled(96) + gap;
+
+    const HWND actionButtons[] = {m_listenButton, m_saveButton, m_clearButton, m_settingsButton};
+    for (HWND control : actionButtons) {
+        ::SetWindowPos(control, nullptr, left, rowTop, rowHeight, rowHeight,
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+        left += rowHeight + gap;
+    }
+    const int leftBlockEnd = left;
 
     // Right blocks are laid out from the right edge inwards.
     auto placeRight = [&](HWND control, int& cursor, int top, int width, int height) {
@@ -1218,7 +1206,7 @@ void MainWindow::Layout() {
         cursor -= gap;
     };
 
-    int cursor = columnWidth - pad;
+    int cursor = clientWidth - pad;
     placeRight(m_spacingCombo, cursor, rowTop, Scaled(62), rowHeight);
     placeRight(m_sizeCombo, cursor, rowTop, Scaled(62), rowHeight);
     placeRight(m_fontCombo, cursor, rowTop, Scaled(140), rowHeight);

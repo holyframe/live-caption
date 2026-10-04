@@ -45,7 +45,7 @@ released or another keyboard key is pressed. Switching foreground windows while
 Left Shift remains held starts a fresh grab without making the newly active
 window jump. Minimized and maximized windows are left unchanged.
 
-The window is split into a full-height right panel, reserved for control
+The window is split into a full-height left panel, reserved for control
 buttons, and a column beside it holding the caption pane, the toolbar's bottom
 panel, and the log view along the foot. The log view reports which source is
 attached and where the transcript is being written.
@@ -61,11 +61,11 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 | **Send** | Appends the selected caption text to the picked web tab's chat input. |
 | **Press Enter** | Also presses Enter in the picked chat input after inserting the selection. Enter in this app triggers Send when checked. |
 | Font / size / spacing | Applied to the caption pane immediately and remembered. |
-| **Save** (right panel) | Opens Save As with `{save time} - {picked tab name}.txt` prefilled. |
-| **Clear** (right panel) | Clears the currently displayed captions. |
-| **Stop / Resume listening** (right panel) | Pauses or resumes reads from the selected live-caption source without clearing existing text. |
-| **Settings** (right panel) | Opens caption-source, theme, and Send-hotkey preferences. |
-| **Pick window** (right panel) | Drag onto a browser/WebView window to select its active tab. The selected window's icon appears beneath the unchanged picker button. |
+| **Stop / Resume listening** (bottom toolbar) | Pauses or resumes reads from the selected live-caption source without clearing existing text. |
+| **Save** (bottom toolbar) | Opens Save As with `{save time} - {picked tab name}.txt` prefilled. |
+| **Clear** (bottom toolbar) | Clears the currently displayed captions. |
+| **Settings** (bottom toolbar) | Opens caption-source, theme, and Send-hotkey preferences. |
+| **Pick window** (left panel) | Drag onto a browser/WebView window to select its active tab. The selected window's icon appears beneath the unchanged picker button. |
 | Double-click empty pane space | Same as Send. |
 | **Shift+Z** | Global shortcut for Send (configurable in Settings). |
 
@@ -80,7 +80,7 @@ selection is implemented directly on it:
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
 | Left gutter (120px) | Click a row to select from that line through the end of the transcript. The selection keeps growing with new captions until it is cleared or sent. Drag to select a fixed range of whole lines. Arrow cursor; the row under the pointer lights up. |
-| Right panel (45px) | Full-height strip with Pick window and the selected target icon at the top, plus listening, Save, Clear, and Settings controls at the bottom. |
+| Left panel (45px) | Full-height strip with Pick window and the selected target icon at the top. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
 
@@ -96,7 +96,7 @@ highlighted pane in `build\`.
 
 ### Picking a web input tab
 
-Drag the Pick window button from the top of the right panel onto a browser or
+Drag the Pick window button from the top of the left panel onto a browser or
 WebView window. A crosshair means the active web tab can be selected; the
 no-drop cursor means it cannot. A valid target is also surrounded by a
 click-through red outline. Releasing on it remembers that exact UI Automation
