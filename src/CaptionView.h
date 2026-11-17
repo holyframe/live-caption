@@ -120,6 +120,12 @@ private:
     void  ShowContextMenu(POINT screen);
     void  RequestCopy();
 
+    // Floating down-arrow button, shown only while the latest line is below
+    // the fold. A click jumps there and resumes following new captions.
+    D2D1_RECT_F ScrollButtonBounds();
+    bool  InScrollButton(POINT client);
+    void  DrawScrollButton();
+
     HWND       m_hwnd = nullptr;
     HINSTANCE  m_instance = nullptr;
 
@@ -137,6 +143,10 @@ private:
     float             m_totalHeight = -1.0f;
     float             m_scrollY = 0.0f;
     bool              m_stickToBottom = true;
+    bool              m_forceFollow = false;
+    bool              m_scrollButtonHover = false;
+    bool              m_scrollButtonPressed = false;
+    bool              m_ateScrollButton = false;
 
     TextPos  m_selectionAnchor;
     TextPos  m_selectionCaret;

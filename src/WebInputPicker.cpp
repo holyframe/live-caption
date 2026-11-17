@@ -396,6 +396,24 @@ struct PickerAutomation {
         RememberActive();
     }
 
+    void MovePicked(int from, int to) {
+        const int count = static_cast<int>(picked.size());
+        if (from < 0 || to < 0 || from >= count || to >= count || from == to) return;
+
+        Target moving = std::move(picked[static_cast<size_t>(from)]);
+        picked.erase(picked.begin() + from);
+        picked.insert(picked.begin() + to, std::move(moving));
+
+        if (active == from) {
+            active = to;
+        } else if (from < active && to >= active) {
+            --active;
+        } else if (from > active && to <= active) {
+            ++active;
+        }
+        RememberActive();
+    }
+
     bool SelectPicked(int index) {
         if (index < 0 || index >= static_cast<int>(picked.size())) return false;
         active = index;
@@ -1381,6 +1399,18 @@ int WebInputPicker::ActivePicked() const {
 
 void WebInputPicker::RemovePicked(int index) {
     m_impl->Update([index](PickerAutomation& automation) { automation.RemovePickedAt(index); });
+}
+
+void WebInputPicker::MovePicked(int from, int to) {
+    if (from == to) return;
+    m_impl->Update([from, to](PickerAutomation& automation) { automation.MovePicked(from, to); });
+}
+
+bool WebInputPicker::SelectPicked(int index) {
+    if (index < 0 || index >= PickedCount()) return false;
+    if (index == ActivePicked()) return true;
+    m_impl->Update([index](PickerAutomation& automation) { automation.SelectPicked(index); });
+    return ActivePicked() == index;
 }
 
 bool WebInputPicker::ActivatePicked(int index, std::wstring& error) {

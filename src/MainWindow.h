@@ -72,6 +72,12 @@ private:
     void RefreshPickedTiles();
     void BindPickedTile(int index);
     void ActivatePickedTile(int index);
+    void SelectPickedTile(int index);
+    void ClosePickedTile(int index);
+    void ReorderPickedTile(int from, int to);
+    RECT CloseButtonRect(const RECT& tileClient) const;
+    bool InCloseButton(HWND tile, POINT clientPoint) const;
+    int  PickedTileIndexAt(POINT screen) const;
     void BeginSelectedIconRemoval(HWND tile);
     void UpdateSelectedIconRemoval(POINT screenPoint);
     void FinishSelectedIconRemoval(bool accept);
@@ -117,6 +123,11 @@ private:
     // destroying it. Later picks are real windows stacked under that one.
     std::vector<PickedTile> m_pickedTiles;
     int m_removingPickedIndex = -1;
+    int m_tilePressIndex = -1;
+    POINT m_tilePressPoint{};
+    bool m_tileReorder = false;
+    int m_closePressIndex = -1;
+    int m_closeHoverIndex = -1;
     HWND m_pickOutlineWindow = nullptr;
     std::wstring m_statusText;
 

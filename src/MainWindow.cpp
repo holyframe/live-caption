@@ -40,6 +40,8 @@ constexpr int kMinColumnWidth = 320;
 constexpr int kTargetPad = 4;
 constexpr int kTargetIcon = 20;
 constexpr int kTargetGap = 6;
+constexpr int kCloseButton = 16;
+constexpr int kReorderSlack = 4;
 // Extends the native title area into the client region. Besides creating
 // breathing room above the captions, this strip behaves like draggable title
 // bar space in normal view. Compact view intentionally omits it.
@@ -326,15 +328,60 @@ LRESULT CALLBACK MainWindow::SelectedIconSubclassProc(HWND hwnd, UINT message, W
     if (!self) return ::DefSubclassProc(hwnd, message, wParam, lParam);
 
     switch (message) {
-        case WM_LBUTTONUP:
-            if (!self->m_selectedIconRemoveDrag) {
-                const int index = self->PickedTileIndex(hwnd);
-                if (index >= 0 && index < self->m_webInputPicker.PickedCount()) {
-                    self->ActivatePickedTile(index);
-                    return 0;
-                }
+        case WM_LBUTTONDOWN: {
+            const int index = self->PickedTileIndex(hwnd);
+            if (index < 0 || index >= self->m_webInputPicker.PickedCount()) break;
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (self->InCloseButton(hwnd, pt)) {
+                self->m_closePressIndex = index;
+                ::SetCapture(hwnd);
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            self->m_tilePressIndex = index;
+            self->m_tilePressPoint = pt;
+            self->m_tileReorder = false;
+            ::SetCapture(hwnd);
+            return 0;
+        }
+
+        case WM_LBUTTONDBLCLK: {
+            const int index = self->PickedTileIndex(hwnd);
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            self->m_tilePressIndex = -1;
+            self->m_tileReorder = false;
+            if (index >= 0 && !self->InCloseButton(hwnd, pt)) {
+                self->ActivatePickedTile(index);
+                return 0;
             }
             break;
+        }
+
+        case WM_LBUTTONUP: {
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (self->m_closePressIndex >= 0) {
+                const int index = self->m_closePressIndex;
+                const bool close = self->InCloseButton(hwnd, pt) &&
+                                   self->PickedTileIndex(hwnd) == index;
+                self->m_closePressIndex = -1;
+                if (::GetCapture() == hwnd) ::ReleaseCapture();
+                if (close) self->ClosePickedTile(index);
+                else ::InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (self->m_tilePressIndex >= 0 && !self->m_selectedIconRemoveDrag) {
+                const bool reorder = self->m_tileReorder;
+                const int index = self->PickedTileIndex(hwnd);
+                self->m_tilePressIndex = -1;
+                self->m_tileReorder = false;
+                if (::GetCapture() == hwnd) ::ReleaseCapture();
+                if (!reorder && index >= 0 && !self->InCloseButton(hwnd, pt)) {
+                    self->SelectPickedTile(index);
+                }
+                return 0;
+            }
+            break;
+        }
 
         case WM_RBUTTONDOWN:
             if (self->PickedTileIndex(hwnd) >= 0 && self->m_webInputPicker.PickedCount() > 0) {
@@ -344,14 +391,41 @@ LRESULT CALLBACK MainWindow::SelectedIconSubclassProc(HWND hwnd, UINT message, W
             }
             break;
 
-        case WM_MOUSEMOVE:
+        case WM_MOUSEMOVE: {
+            const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             if (self->m_selectedIconRemoveDrag) {
-                POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                POINT point = pt;
                 ::ClientToScreen(hwnd, &point);
                 self->UpdateSelectedIconRemoval(point);
                 return 0;
             }
+            if (self->m_tilePressIndex >= 0 && ::GetCapture() == hwnd) {
+                const int slack = self->Scaled(kReorderSlack);
+                if (!self->m_tileReorder &&
+                    (std::abs(pt.x - self->m_tilePressPoint.x) > slack ||
+                     std::abs(pt.y - self->m_tilePressPoint.y) > slack)) {
+                    self->m_tileReorder = true;
+                }
+                if (self->m_tileReorder) {
+                    POINT screen = pt;
+                    ::ClientToScreen(hwnd, &screen);
+                    const int from = self->PickedTileIndex(hwnd);
+                    const int target = self->PickedTileIndexAt(screen);
+                    if (from >= 0 && target >= 0 && target != from) {
+                        self->ReorderPickedTile(from, target);
+                    }
+                    ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
+                }
+                return 0;
+            }
+            const int index = self->PickedTileIndex(hwnd);
+            const int hover = index >= 0 && self->InCloseButton(hwnd, pt) ? index : -1;
+            if (hover != self->m_closeHoverIndex) {
+                self->m_closeHoverIndex = hover;
+                ::InvalidateRect(hwnd, nullptr, FALSE);
+            }
             break;
+        }
 
         case WM_RBUTTONUP:
             if (self->m_selectedIconRemoveDrag) {
@@ -364,12 +438,17 @@ LRESULT CALLBACK MainWindow::SelectedIconSubclassProc(HWND hwnd, UINT message, W
             break;
 
         case WM_SETCURSOR:
+            if (self->m_tileReorder) {
+                ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
+                return TRUE;
+            }
             if (self->m_selectedIconRemoveDrag) {
                 const LPCWSTR cursor = self->m_selectedIconOutside ? IDC_HAND : IDC_SIZEALL;
                 ::SetCursor(::LoadCursorW(nullptr, cursor));
                 return TRUE;
             }
-            if (self->PickedTileIndex(hwnd) >= 0 && self->m_webInputPicker.PickedCount() > 0) {
+            if (self->m_closeHoverIndex >= 0 ||
+                (self->PickedTileIndex(hwnd) >= 0 && self->m_webInputPicker.PickedCount() > 0)) {
                 ::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
                 return TRUE;
             }
@@ -384,6 +463,9 @@ LRESULT CALLBACK MainWindow::SelectedIconSubclassProc(HWND hwnd, UINT message, W
 
         case WM_CANCELMODE:
         case WM_CAPTURECHANGED:
+            self->m_tilePressIndex = -1;
+            self->m_tileReorder = false;
+            self->m_closePressIndex = -1;
             if (self->m_selectedIconRemoveDrag) {
                 self->FinishSelectedIconRemoval(false);
                 return 0;
@@ -1006,22 +1088,39 @@ void MainWindow::DrawSelectedWindowIcon(const DRAWITEMSTRUCT& item) const {
                      iconSize, 0, nullptr, DI_NORMAL);
     }
 
+    const int closeSize = std::max(Scaled(kCloseButton), 14);
     std::wstring title = m_webInputPicker.PickedName(index);
     if (title.empty()) title = L"Untitled target";
 
     RECT textRc = item.rcItem;
     textRc.left += pad + (icon ? iconSize + gap : 0);
     textRc.top += pad;
-    textRc.right -= pad;
+    textRc.right -= pad + closeSize + gap;
     textRc.bottom -= pad;
-    if (textRc.right <= textRc.left) return;
+    if (textRc.right > textRc.left) {
+        const HGDIOBJ oldFont = m_controlFont ? ::SelectObject(item.hDC, m_controlFont) : nullptr;
+        ::SetBkMode(item.hDC, TRANSPARENT);
+        ::SetTextColor(item.hDC, m_darkTheme ? kTextPrimary : kLightTextPrimary);
+        ::DrawTextW(item.hDC, title.c_str(), static_cast<int>(title.size()), &textRc,
+                    DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS | DT_EDITCONTROL | DT_NOPREFIX);
+        if (oldFont) ::SelectObject(item.hDC, oldFont);
+    }
 
-    const HGDIOBJ oldFont = m_controlFont ? ::SelectObject(item.hDC, m_controlFont) : nullptr;
+    const RECT closeRc = CloseButtonRect(item.rcItem);
+    const bool closeHot = m_closeHoverIndex == index || m_closePressIndex == index;
+    if (closeHot && m_buttonPressedBrush) ::FillRect(item.hDC, &closeRc, m_buttonPressedBrush);
+
+    const int iconPx = std::max(Scaled(12), 10);
+    HFONT iconFont = ::CreateFontW(-iconPx, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                   DEFAULT_PITCH | FF_DONTCARE, L"Segoe MDL2 Assets");
+    const HGDIOBJ oldIconFont = iconFont ? ::SelectObject(item.hDC, iconFont) : nullptr;
     ::SetBkMode(item.hDC, TRANSPARENT);
     ::SetTextColor(item.hDC, m_darkTheme ? kTextPrimary : kLightTextPrimary);
-    ::DrawTextW(item.hDC, title.c_str(), static_cast<int>(title.size()), &textRc,
-                DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS | DT_EDITCONTROL | DT_NOPREFIX);
-    if (oldFont) ::SelectObject(item.hDC, oldFont);
+    RECT glyphRc = closeRc;
+    ::DrawTextW(item.hDC, L"\uE711", 1, &glyphRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    if (oldIconFont) ::SelectObject(item.hDC, oldIconFont);
+    if (iconFont) ::DeleteObject(iconFont);
 }
 
 void MainWindow::DrawStatusPanel(const DRAWITEMSTRUCT& item) const {
@@ -1169,7 +1268,9 @@ int MainWindow::SelectedTargetHeight(int controlWidth, int index) const {
     const bool hasIcon =
         index >= 0 && index < static_cast<int>(m_pickedTiles.size()) &&
         m_pickedTiles[static_cast<size_t>(index)].icon;
-    const int textWidth = std::max(controlWidth - pad - (hasIcon ? iconSize + gap : 0) - pad, 1);
+    const int closeSize = std::max(Scaled(kCloseButton), 14);
+    const int textWidth = std::max(
+        controlWidth - pad - (hasIcon ? iconSize + gap : 0) - gap - closeSize - pad, 1);
 
     std::wstring title = m_webInputPicker.PickedName(index);
     if (title.empty()) title = L"Untitled target";
@@ -1845,10 +1946,19 @@ void MainWindow::BindPickedTile(int index) {
 void MainWindow::RefreshPickedTiles() {
     const int count = m_webInputPicker.PickedCount();
     while (static_cast<int>(m_pickedTiles.size()) > std::max(count, 1)) {
-        PickedTile& extra = m_pickedTiles.back();
-        if (extra.icon) ::DestroyIcon(extra.icon);
-        if (extra.hwnd) ::DestroyWindow(extra.hwnd);
+        // The original tile keeps control id 1018 for the life of the window.
+        const int last = static_cast<int>(m_pickedTiles.size()) - 1;
+        if (last > 0 &&
+            ::GetDlgCtrlID(m_pickedTiles[static_cast<size_t>(last)].hwnd) == IDC_SELECTED_WINDOW) {
+            std::swap(m_pickedTiles[static_cast<size_t>(last)],
+                      m_pickedTiles[static_cast<size_t>(last - 1)]);
+        }
+        PickedTile extra = std::move(m_pickedTiles.back());
         m_pickedTiles.pop_back();
+        if (extra.icon) ::DestroyIcon(extra.icon);
+        if (extra.hwnd && ::GetDlgCtrlID(extra.hwnd) != IDC_SELECTED_WINDOW) {
+            ::DestroyWindow(extra.hwnd);
+        }
     }
     while (static_cast<int>(m_pickedTiles.size()) < std::max(count, 1) && CreatePickedTile()) {
     }
@@ -1864,6 +1974,68 @@ void MainWindow::RefreshPickedTiles() {
         ::SetWindowTextW(first.hwnd, L"");
         ::ShowWindow(first.hwnd, SW_HIDE);
     }
+    Layout();
+}
+
+RECT MainWindow::CloseButtonRect(const RECT& tileClient) const {
+    const int size = std::max(Scaled(kCloseButton), 14);
+    const int pad = Scaled(kTargetPad);
+    RECT rect{};
+    rect.right = tileClient.right - pad;
+    rect.left = rect.right - size;
+    const int offset = std::max(static_cast<int>((tileClient.bottom - tileClient.top - size) / 2), pad);
+    rect.top = tileClient.top + offset;
+    rect.bottom = rect.top + size;
+    return rect;
+}
+
+bool MainWindow::InCloseButton(HWND tile, POINT clientPoint) const {
+    RECT client{};
+    if (!tile || !::GetClientRect(tile, &client)) return false;
+    const RECT button = CloseButtonRect(client);
+    return ::PtInRect(&button, clientPoint) != FALSE;
+}
+
+int MainWindow::PickedTileIndexAt(POINT screen) const {
+    const int count = m_webInputPicker.PickedCount();
+    for (int index = 0; index < count && index < static_cast<int>(m_pickedTiles.size()); ++index) {
+        const HWND tile = m_pickedTiles[static_cast<size_t>(index)].hwnd;
+        if (!tile || !::IsWindowVisible(tile)) continue;
+        RECT rect{};
+        if (!::GetWindowRect(tile, &rect)) continue;
+        if (::PtInRect(&rect, screen)) return index;
+    }
+    return -1;
+}
+
+void MainWindow::SelectPickedTile(int index) {
+    if (!m_webInputPicker.SelectPicked(index)) return;
+    UpdateWindowTitle();
+    for (const PickedTile& tile : m_pickedTiles) {
+        if (tile.hwnd) ::InvalidateRect(tile.hwnd, nullptr, TRUE);
+    }
+}
+
+void MainWindow::ClosePickedTile(int index) {
+    if (index < 0 || index >= m_webInputPicker.PickedCount()) return;
+    m_webInputPicker.RemovePicked(index);
+    RefreshPickedTiles();
+    UpdateWindowTitle();
+    SetStatus(L"Selected tab removed.");
+}
+
+void MainWindow::ReorderPickedTile(int from, int to) {
+    const int count = m_webInputPicker.PickedCount();
+    if (from == to || from < 0 || to < 0 || from >= count || to >= count) return;
+    if (from >= static_cast<int>(m_pickedTiles.size()) ||
+        to >= static_cast<int>(m_pickedTiles.size())) {
+        return;
+    }
+
+    m_webInputPicker.MovePicked(from, to);
+    PickedTile moving = std::move(m_pickedTiles[static_cast<size_t>(from)]);
+    m_pickedTiles.erase(m_pickedTiles.begin() + from);
+    m_pickedTiles.insert(m_pickedTiles.begin() + to, std::move(moving));
     Layout();
 }
 

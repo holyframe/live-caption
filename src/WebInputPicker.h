@@ -69,6 +69,10 @@ public:
     int ActivePicked() const;
     // Drops one kept tab. The active tab stays put unless it was the one removed.
     void RemovePicked(int index);
+    // Moves a kept tab to another position. The active tab stays the same tab.
+    void MovePicked(int from, int to);
+    // Makes one kept tab the Send target without raising its window.
+    bool SelectPicked(int index);
     // Makes one kept tab the Send target and brings its browser tab forward.
     bool ActivatePicked(int index, std::wstring& error);
 

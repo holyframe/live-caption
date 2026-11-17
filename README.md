@@ -81,6 +81,7 @@ selection is implemented directly on it:
 | Gesture | Behaviour |
 | --- | --- |
 | Drag | Selects across lines. Dragging past the top or bottom edge scrolls. |
+| Down arrow | Appears at the bottom of the caption pane after you scroll up. Click it to jump to the latest line and follow new captions again. |
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
 | Left gutter (120px) | Click a row to select from that line through the end of the transcript. The selection keeps growing with new captions until it is cleared or sent. Drag to select a fixed range of whole lines. Arrow cursor; the row under the pointer lights up. |
@@ -108,12 +109,17 @@ document and input element, and adds that tab's icon and full title beneath
 any tabs already picked. Picking a tab that is already listed refreshes that
 entry instead of adding a second copy. The tile with the bright border is the
 one Send uses, and picking another tab does not move that border. Left-click a
-tile to change it. Widen the left panel if a title wraps more than you want.
+tile to choose it for Send. Double-click it to bring that browser tab to the
+front. Drag a tile up or down to reorder the list, or click the close button at
+its right end to remove it. Widen the left panel if a title wraps more than you
+want.
 Browsers that hide their page or input from
 accessibility tools are rejected because the app cannot prove where text and
 Enter would be delivered.
-Left-click a tab tile to make it the Send target and bring that browser tab to
-the front. Right-drag a tile outside the app to remove that tab. The others stay.
+Left-click a tab tile to make it the Send target. Double-click it to bring that
+browser window to the front. Drag a tile to change its place in the list. Click
+the close button on a tile, or right-drag the tile outside the app, to remove
+that tab. The others stay.
 Click Send after selecting text in the caption pane. The app reactivates the
 retained browser tab, confirms the exact retained chat input, and appends the
 selection without erasing an existing draft. Chromium inputs that expose a
@@ -124,9 +130,9 @@ remains a real key event and submission is confirmed by the composer clearing;
 otherwise the combined input value is read back before success is reported.
 If a page contains several editable fields, release directly over the desired
 chat composer to select it instead of the automatically preferred field.
-To forget one picked target, right-drag its tile outside the app
-window and release. Releasing inside cancels; releasing outside removes that
-tab only. Tabs listed above and below it stay.
+To forget one picked target, click the close button at the right end of its
+tile, or right-drag the tile outside the app and release. Releasing a right-drag
+inside the app cancels. Either way, only that tab is removed.
 
 When the page is accessible, only web inputs exposed beneath a UI Automation
 `Document` are accepted.

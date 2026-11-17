@@ -36,6 +36,20 @@ constexpr UINT_PTR kAutoScrollTimerId = 1;
 constexpr UINT     kAutoScrollIntervalMs = 40;
 constexpr float    kAutoScrollMaxStepDip = 48.0f;
 
+// Round down-arrow shown while the reader has left the latest caption.
+// Hidden at the end; a click returns there.
+constexpr float kScrollButtonSlack = 8.0f;
+constexpr float kScrollButtonSizeDip = 32.0f;
+constexpr float kScrollButtonBottomDip = 16.0f;
+constexpr float kScrollButtonChevronDip = 12.0f;
+constexpr D2D1_COLOR_F kDarkScrollFill = {62.0f / 255.0f, 62.0f / 255.0f, 62.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kDarkScrollFillHot = {84.0f / 255.0f, 84.0f / 255.0f, 84.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kDarkScrollBorder = {120.0f / 255.0f, 120.0f / 255.0f, 120.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kLightScrollFill = {1.0f, 1.0f, 1.0f, 1.0f};
+constexpr D2D1_COLOR_F kLightScrollFillHot = {236.0f / 255.0f, 236.0f / 255.0f, 236.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kLightScrollBorder = {176.0f / 255.0f, 176.0f / 255.0f, 176.0f / 255.0f, 1.0f};
+constexpr D2D1_COLOR_F kScrollShadow = {0.0f, 0.0f, 0.0f, 0.28f};
+
 enum ContextMenuCommand : UINT {
     kMenuCopy = 1,
     kMenuSelectAll,
@@ -162,14 +176,28 @@ LRESULT CaptionView::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         }
 
         case WM_LBUTTONDOWN: {
+            m_ateScrollButton = false;
             ::SetFocus(m_hwnd);
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (InScrollButton(pt)) {
+                m_scrollButtonPressed = true;
+                m_scrollButtonHover = true;
+                ::SetCapture(m_hwnd);
+                ::InvalidateRect(m_hwnd, nullptr, FALSE);
+                return 0;
+            }
             BeginDrag(pt, (wParam & MK_SHIFT) != 0);
             return 0;
         }
 
         case WM_MOUSEMOVE: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            const bool hover = InScrollButton(pt);
+            if (hover != m_scrollButtonHover) {
+                m_scrollButtonHover = hover;
+                ::InvalidateRect(m_hwnd, nullptr, FALSE);
+            }
+            if (m_scrollButtonPressed) return 0;
             if (m_dragKind != DragKind::None) {
                 m_dragPoint = pt;
                 UpdateDrag(pt);
@@ -182,19 +210,37 @@ LRESULT CaptionView::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
 
         case WM_MOUSELEAVE:
             m_trackingLeave = false;
-            if (m_hoverValid) {
+            if (m_hoverValid || m_scrollButtonHover) {
                 m_hoverValid = false;
+                m_scrollButtonHover = false;
                 ::InvalidateRect(m_hwnd, nullptr, FALSE);
             }
             return 0;
 
         case WM_LBUTTONUP:
+            if (m_scrollButtonPressed) {
+                const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                const bool activate = InScrollButton(pt);
+                m_scrollButtonPressed = false;
+                m_ateScrollButton = true;
+                if (::GetCapture() == m_hwnd) ::ReleaseCapture();
+                if (activate) {
+                    // An explicit jump resumes following, even if a selection
+                    // had been holding the viewport in place.
+                    m_forceFollow = true;
+                    ScrollToBottom();
+                } else {
+                    ::InvalidateRect(m_hwnd, nullptr, FALSE);
+                }
+                return 0;
+            }
             EndDrag();
             return 0;
 
         case WM_CAPTURECHANGED:
             // Someone else took the mouse; abandon the drag but keep what is
             // already selected.
+            m_scrollButtonPressed = false;
             m_dragKind = DragKind::None;
             StopAutoScroll();
             return 0;
@@ -211,13 +257,20 @@ LRESULT CaptionView::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                 POINT pt{};
                 ::GetCursorPos(&pt);
                 ::ScreenToClient(m_hwnd, &pt);
-                ::SetCursor(::LoadCursorW(nullptr, InGutter(pt) ? IDC_ARROW : IDC_IBEAM));
+                const wchar_t* cursor = IDC_IBEAM;
+                if (InScrollButton(pt)) cursor = IDC_HAND;
+                else if (InGutter(pt)) cursor = IDC_ARROW;
+                ::SetCursor(::LoadCursorW(nullptr, cursor));
                 return TRUE;
             }
             break;
 
         case WM_LBUTTONDBLCLK: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (m_ateScrollButton || InScrollButton(pt)) {
+                m_ateScrollButton = false;
+                return 0;
+            }
             if (InGutter(pt)) {
                 // A second click in the gutter is still a line select, never Send.
                 EndDrag();
@@ -542,6 +595,10 @@ void CaptionView::Clear() {
     m_totalHeight = -1.0f;
     m_scrollY = 0.0f;
     m_stickToBottom = true;
+    m_forceFollow = false;
+    m_scrollButtonHover = false;
+    m_scrollButtonPressed = false;
+    m_ateScrollButton = false;
     ResetSelection();
     m_hoverValid = false;
     UpdateScrollBar();
@@ -578,8 +635,10 @@ void CaptionView::SetScrollPos(float y, bool redraw) {
     const float maxScroll = std::max(TotalHeight() - viewport, 0.0f);
 
     const float clamped = std::clamp(y, 0.0f, maxScroll);
-    // Re-enable auto-follow only when parked at the very bottom.
+    // Re-enable auto-follow only when parked at the very bottom. Leaving that
+    // spot also drops the explicit "keep following" request from the button.
     m_stickToBottom = clamped >= maxScroll - 1.0f;
+    if (!m_stickToBottom) m_forceFollow = false;
 
     if (std::fabs(clamped - m_scrollY) < 0.5f) {
         UpdateScrollBar();
@@ -588,6 +647,77 @@ void CaptionView::SetScrollPos(float y, bool redraw) {
     m_scrollY = clamped;
     UpdateScrollBar();
     if (redraw) ::InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+D2D1_RECT_F CaptionView::ScrollButtonBounds() {
+    const D2D1_RECT_F hidden = D2D1::RectF(0.0f, 0.0f, 0.0f, 0.0f);
+    if (!m_hwnd || m_lines.empty()) return hidden;
+
+    RECT rc{};
+    ::GetClientRect(m_hwnd, &rc);
+    const float viewport = static_cast<float>(rc.bottom - rc.top);
+    const float clientWidth = static_cast<float>(rc.right - rc.left);
+    const float maxScroll = std::max(TotalHeight() - viewport, 0.0f);
+    if (maxScroll <= kScrollButtonSlack || m_scrollY >= maxScroll - kScrollButtonSlack) return hidden;
+
+    const float scale = static_cast<float>(m_dpi) / 96.0f;
+    const float size = kScrollButtonSizeDip * scale;
+    const float margin = 8.0f * scale;
+    if (viewport < size + kScrollButtonBottomDip * scale + margin) return hidden;
+    if (clientWidth < size + margin * 2.0f) return hidden;
+
+    const float left = (clientWidth - size) * 0.5f;
+    const float bottom = viewport - kScrollButtonBottomDip * scale;
+    const float top = bottom - size;
+    return D2D1::RectF(left, top, left + size, bottom);
+}
+
+bool CaptionView::InScrollButton(POINT client) {
+    const D2D1_RECT_F bounds = ScrollButtonBounds();
+    if (bounds.right <= bounds.left) return false;
+    const float x = static_cast<float>(client.x);
+    const float y = static_cast<float>(client.y);
+    return x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom;
+}
+
+void CaptionView::DrawScrollButton() {
+    const D2D1_RECT_F bounds = ScrollButtonBounds();
+    if (bounds.right <= bounds.left || !m_renderTarget) return;
+
+    const bool hot = m_scrollButtonHover || m_scrollButtonPressed;
+    const D2D1_COLOR_F fill =
+        m_darkTheme ? (hot ? kDarkScrollFillHot : kDarkScrollFill)
+                    : (hot ? kLightScrollFillHot : kLightScrollFill);
+    const D2D1_COLOR_F border = m_darkTheme ? kDarkScrollBorder : kLightScrollBorder;
+    const float radius = (bounds.bottom - bounds.top) * 0.5f;
+    const D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(bounds, radius, radius);
+
+    ComPtr<ID2D1SolidColorBrush> shadowBrush;
+    ComPtr<ID2D1SolidColorBrush> fillBrush;
+    ComPtr<ID2D1SolidColorBrush> borderBrush;
+    if (FAILED(m_renderTarget->CreateSolidColorBrush(kScrollShadow, shadowBrush.GetAddressOf())) ||
+        FAILED(m_renderTarget->CreateSolidColorBrush(fill, fillBrush.GetAddressOf())) ||
+        FAILED(m_renderTarget->CreateSolidColorBrush(border, borderBrush.GetAddressOf()))) {
+        return;
+    }
+
+    const D2D1_RECT_F shadowBounds =
+        D2D1::RectF(bounds.left, bounds.top + 1.0f, bounds.right, bounds.bottom + 2.0f);
+    m_renderTarget->FillRoundedRectangle(D2D1::RoundedRect(shadowBounds, radius, radius),
+                                         shadowBrush.Get());
+    m_renderTarget->FillRoundedRectangle(pill, fillBrush.Get());
+    m_renderTarget->DrawRoundedRectangle(pill, borderBrush.Get(), 1.0f);
+
+    if (!m_textBrush) return;
+    const float scale = static_cast<float>(m_dpi) / 96.0f;
+    const float arm = kScrollButtonChevronDip * scale * 0.42f;
+    const float tipX = (bounds.left + bounds.right) * 0.5f;
+    const float midY = (bounds.top + bounds.bottom) * 0.5f;
+    const float stroke = std::max(1.25f * scale, 1.0f);
+    m_renderTarget->DrawLine(D2D1::Point2F(tipX - arm, midY - arm * 0.55f),
+                             D2D1::Point2F(tipX, midY + arm * 0.45f), m_textBrush.Get(), stroke);
+    m_renderTarget->DrawLine(D2D1::Point2F(tipX, midY + arm * 0.45f),
+                             D2D1::Point2F(tipX + arm, midY - arm * 0.55f), m_textBrush.Get(), stroke);
 }
 
 void CaptionView::UpdateScrollBar() {
@@ -679,6 +809,8 @@ void CaptionView::OnPaint() {
                 break;
             }
         }
+
+        DrawScrollButton();
 
         const HRESULT hr = m_renderTarget->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET) {
@@ -786,6 +918,9 @@ bool CaptionView::FarEndAtTranscriptEnd() const {
 
 bool CaptionView::ShouldFollowBottom() const {
     if (!m_stickToBottom) return false;
+    // The scroll-to-bottom button is an explicit request to catch up and stay
+    // with new captions, even when a selection had pinned the viewport.
+    if (m_forceFollow) return true;
     // A selection that is not growing with the transcript must keep its
     // viewport — following the bottom would scroll the highlight out of sight
     // when the pane is resized or new captions arrive while the user is away.
@@ -1102,7 +1237,7 @@ void CaptionView::UpdateHover(POINT client) {
 
     bool valid = false;
     size_t line = 0;
-    if (InGutter(client) && LineIndexFromPoint(client, &line)) {
+    if (!InScrollButton(client) && InGutter(client) && LineIndexFromPoint(client, &line)) {
         valid = true;
     }
 
