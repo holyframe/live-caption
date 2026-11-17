@@ -337,6 +337,72 @@ struct PickerAutomation {
         }
     };
 
+    bool SameElement(IUIAutomationElement* first, IUIAutomationElement* second) {
+        if (!first || !second || !automation) return false;
+        BOOL same = FALSE;
+        return SUCCEEDED(automation->CompareElements(first, second, &same)) && same;
+    }
+
+    // Two picks are the same tab when they come from the same browser window
+    // and the same tab or document element. A different tab in that window is
+    // a different pick.
+    bool SamePickedTab(const Target& first, const Target& second) {
+        if (!first.hwnd || first.hwnd != second.hwnd) return false;
+        if (SameElement(first.browserTab.Get(), second.browserTab.Get())) return true;
+        return SameElement(first.document.Get(), second.document.Get());
+    }
+
+    void RememberActive() {
+        if (active < 0 || active >= static_cast<int>(picked.size())) {
+            active = picked.empty() ? -1 : 0;
+        }
+        if (active < 0) {
+            selected.Reset();
+            return;
+        }
+        selected = picked[static_cast<size_t>(active)];
+    }
+
+    void AddPicked(const Target& incoming) {
+        int existing = -1;
+        for (int index = 0; index < static_cast<int>(picked.size()); ++index) {
+            if (SamePickedTab(picked[static_cast<size_t>(index)], incoming)) {
+                existing = index;
+                break;
+            }
+        }
+        if (existing >= 0) {
+            // Refresh the stored tab. Do not move which tab is active.
+            picked[static_cast<size_t>(existing)] = incoming;
+        } else {
+            picked.push_back(incoming);
+            // The first pick has nothing to stay focused on, so it becomes active.
+            // Later picks are only added to the list.
+            if (active < 0) active = static_cast<int>(picked.size()) - 1;
+        }
+        RememberActive();
+    }
+
+    void RemovePickedAt(int index) {
+        if (index < 0 || index >= static_cast<int>(picked.size())) return;
+        picked.erase(picked.begin() + index);
+        if (picked.empty()) {
+            active = -1;
+        } else if (active == index) {
+            active = std::min(index, static_cast<int>(picked.size()) - 1);
+        } else if (active > index) {
+            --active;
+        }
+        RememberActive();
+    }
+
+    bool SelectPicked(int index) {
+        if (index < 0 || index >= static_cast<int>(picked.size())) return false;
+        active = index;
+        RememberActive();
+        return true;
+    }
+
     bool EnsureAutomation() {
         if (automation) return true;
         HRESULT hr = ::CoCreateInstance(CLSID_CUIAutomation8, nullptr, CLSCTX_INPROC_SERVER,
@@ -982,6 +1048,8 @@ struct PickerAutomation {
     ComPtr<IUIAutomation> automation;
     Target candidate;
     Target selected;
+    std::vector<Target> picked;
+    int active = -1;
     HWND lastWindow = nullptr;
     ULONGLONG lastInspectionTick = 0;
     WebInputPickState lastState = WebInputPickState::NoWindow;
@@ -997,6 +1065,12 @@ struct WebInputPicker::Impl {
         bool candidateValid = false;
         HWND selectedWindow = nullptr;
         std::wstring selectedName;
+        struct PickedTab {
+            HWND window = nullptr;
+            std::wstring name;
+        };
+        std::vector<PickedTab> picked;
+        int activePicked = -1;
     } snapshot;
 
     struct HoverRequest {
@@ -1016,9 +1090,15 @@ struct WebInputPicker::Impl {
         const bool accessible = automation.lastState == WebInputPickState::Valid &&
                                  candidate.hwnd && candidate.processId &&
                                  candidate.document && candidate.input;
-        return {automation.lastState,    candidate.hwnd,
-                candidate.name,         accessible,
-                automation.selected.hwnd, automation.selected.name};
+        Snapshot snapshot{automation.lastState,    candidate.hwnd,
+                          candidate.name,         accessible,
+                          automation.selected.hwnd, automation.selected.name};
+        snapshot.activePicked = automation.active;
+        snapshot.picked.reserve(automation.picked.size());
+        for (const PickerAutomation::Target& tab : automation.picked) {
+            snapshot.picked.push_back({tab.hwnd, tab.name});
+        }
+        return snapshot;
     }
 
     void ClearPreviewSnapshot(WebInputPickState state = WebInputPickState::NoWindow) {
@@ -1231,7 +1311,7 @@ void WebInputPicker::ResetCandidate() {
 bool WebInputPicker::CommitCandidate() {
     if (!m_impl->commitReady || !CandidateValid()) return false;
     m_impl->InvalidateHover();
-    m_impl->Update([](PickerAutomation& automation) { automation.selected = automation.candidate; });
+    m_impl->Update([](PickerAutomation& automation) { automation.AddPicked(automation.candidate); });
     return true;
 }
 
@@ -1273,7 +1353,55 @@ void WebInputPicker::RaiseSelectedWindow() {
 void WebInputPicker::ClearSelected() {
     m_impl->InvalidateHover();
     m_impl->ClearPreviewSnapshot();
-    m_impl->Update([](PickerAutomation& automation) { automation.selected.Reset(); });
+    m_impl->Update([](PickerAutomation& automation) {
+        automation.picked.clear();
+        automation.active = -1;
+        automation.selected.Reset();
+    });
+}
+
+int WebInputPicker::PickedCount() const {
+    return static_cast<int>(m_impl->snapshot.picked.size());
+}
+
+HWND WebInputPicker::PickedWindow(int index) const {
+    if (index < 0 || index >= PickedCount()) return nullptr;
+    return m_impl->snapshot.picked[static_cast<size_t>(index)].window;
+}
+
+const std::wstring& WebInputPicker::PickedName(int index) const {
+    static const std::wstring kEmpty;
+    if (index < 0 || index >= PickedCount()) return kEmpty;
+    return m_impl->snapshot.picked[static_cast<size_t>(index)].name;
+}
+
+int WebInputPicker::ActivePicked() const {
+    return m_impl->snapshot.activePicked;
+}
+
+void WebInputPicker::RemovePicked(int index) {
+    m_impl->Update([index](PickerAutomation& automation) { automation.RemovePickedAt(index); });
+}
+
+bool WebInputPicker::ActivatePicked(int index, std::wstring& error) {
+    struct Outcome {
+        bool ok = false;
+        std::wstring error;
+        Impl::Snapshot snapshot;
+    };
+    auto outcome = m_impl->Invoke([index](PickerAutomation& automation) {
+        Outcome result;
+        if (!automation.SelectPicked(index)) {
+            result.error = L"That picked tab is no longer available.";
+        } else {
+            result.ok = automation.ActivateSelectedWindow(result.error);
+        }
+        result.snapshot = Impl::Capture(automation);
+        return result;
+    });
+    error = std::move(outcome.error);
+    m_impl->snapshot = std::move(outcome.snapshot);
+    return outcome.ok;
 }
 
 WebInputSendResult WebInputPicker::SendText(const std::wstring& text, bool pressEnter,

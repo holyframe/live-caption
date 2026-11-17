@@ -56,6 +56,10 @@ keeps enough height for its toolbar row. That row stays at the foot of the
 panel, so the space a drag opens up lands under the divider and the controls
 do not move. The position is remembered across runs as `BottomPanelHeight`.
 
+Drag the divider on the right edge of the left panel to make that panel wider
+or narrower. It stays wide enough for the pick button, and the caption column
+keeps at least 320px. The width is remembered as `SidePanelWidth`.
+
 | Control | Behaviour |
 | --- | --- |
 | **Send** | Appends the selected caption text to the picked web tab's chat input. |
@@ -65,7 +69,7 @@ do not move. The position is remembered across runs as `BottomPanelHeight`.
 | **Save** (bottom toolbar) | Opens Save As with `{save time} - {picked tab name}.txt` prefilled. |
 | **Clear** (bottom toolbar) | Clears the currently displayed captions. |
 | **Settings** (bottom toolbar) | Opens caption-source, theme, and Send-hotkey preferences. |
-| **Pick window** (left panel) | Drag onto a browser/WebView window to select its active tab. The selected window's icon appears beneath the unchanged picker button. |
+| **Pick window** (left panel) | Drag onto a browser/WebView window to add its active tab. Each new tab is listed under the ones already picked, with its icon and full title. |
 | Double-click empty pane space | Same as Send. |
 | **Shift+Z** | Global shortcut for Send (configurable in Settings). |
 
@@ -80,7 +84,7 @@ selection is implemented directly on it:
 | Shift+click | Extends the selection from the last click. |
 | Double-click a word | Selects that word. Over empty space the gesture still means Send. |
 | Left gutter (120px) | Click a row to select from that line through the end of the transcript. The selection keeps growing with new captions until it is cleared or sent. Drag to select a fixed range of whole lines. Arrow cursor; the row under the pointer lights up. |
-| Left panel (45px) | Full-height strip with Pick window and the selected target icon at the top. |
+| Left panel | Full-height strip with Pick window and the picked tabs stacked under it. Drag its right edge to change the width; default 72px. |
 | Right-click | Copy / Select all / Clear selection. |
 | **Ctrl+A** / **Ctrl+C** / **Esc** | Select all, copy, clear the selection. |
 
@@ -100,12 +104,16 @@ Drag the Pick window button from the top of the left panel onto a browser or
 WebView window. A crosshair means the active web tab can be selected; the
 no-drop cursor means it cannot. A valid target is also surrounded by a
 click-through red outline. Releasing on it remembers that exact UI Automation
-document and input element, and displays the target window's icon in a separate
-tile beneath the picker. Browsers that hide their page or input from
+document and input element, and adds that tab's icon and full title beneath
+any tabs already picked. Picking a tab that is already listed refreshes that
+entry instead of adding a second copy. The tile with the bright border is the
+one Send uses, and picking another tab does not move that border. Left-click a
+tile to change it. Widen the left panel if a title wraps more than you want.
+Browsers that hide their page or input from
 accessibility tools are rejected because the app cannot prove where text and
 Enter would be delivered.
-Left-click the selected target icon to reactivate that browser tab and bring its
-window to the front. Right-drag the icon outside the app to forget the target.
+Left-click a tab tile to make it the Send target and bring that browser tab to
+the front. Right-drag a tile outside the app to remove that tab. The others stay.
 Click Send after selecting text in the caption pane. The app reactivates the
 retained browser tab, confirms the exact retained chat input, and appends the
 selection without erasing an existing draft. Chromium inputs that expose a
@@ -116,9 +124,9 @@ remains a real key event and submission is confirmed by the composer clearing;
 otherwise the combined input value is read back before success is reported.
 If a page contains several editable fields, release directly over the desired
 chat composer to select it instead of the automatically preferred field.
-To forget a picked target, right-drag its separate icon tile outside the app
-window and release. Releasing inside cancels; releasing outside removes the
-retained window, tab, input element, accessible label, and icon.
+To forget one picked target, right-drag its tile outside the app
+window and release. Releasing inside cancels; releasing outside removes that
+tab only. Tabs listed above and below it stay.
 
 When the page is accessible, only web inputs exposed beneath a UI Automation
 `Document` are accepted.
@@ -250,7 +258,8 @@ default save folder is `script` beside `LiveCaptionView.exe`; it is created on
 the first save. Preferences live in
 `LiveCaptionView.ini` next to the executable along with font, size, line
 spacing, checkbox states, window position, `BottomPanelHeight` (where the
-caption/bottom-panel divider sits, in 96 dpi units), `TranscriptPath` (blank
+caption/bottom-panel divider sits, in 96 dpi units), `SidePanelWidth` (the left
+panel, in the same units), `TranscriptPath` (blank
 means `captions.txt` beside the executable), `SaveFolder`, and `PollIntervalMs` (how often the
 caption source is re-read; default 8, see [Staying real-time](#staying-real-time)).
 

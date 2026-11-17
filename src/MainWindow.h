@@ -42,7 +42,10 @@ private:
     void DrawSplitter(HDC dc) const;
     int  LogBarHeight() const;
     int  ClampBottomPanelHeight(int wanted, int clientHeight) const;
+    int  ClampSidePanelWidth(int wanted, int clientWidth) const;
+    int  SelectedTargetHeight(int controlWidth, int index) const;
     void DragSplitterTo(int splitterTop);
+    void DragSideSplitterTo(int splitterLeft);
     void Layout();
     void UpdateHotkeyRegistration();
     void QueueHotkeySend();
@@ -64,12 +67,14 @@ private:
     void UpdateWindowPick(POINT screenPoint, bool forceRefresh = false);
     void FinishWindowPick(bool accept);
     void ShowWindowPickStatus(WebInputPickState state);
-    void UpdatePickedWindowIcon(HWND window);
-    void ActivatePickedWindow();
-    void BeginSelectedIconRemoval();
+    int  PickedTileIndex(HWND tile) const;
+    bool CreatePickedTile();
+    void RefreshPickedTiles();
+    void BindPickedTile(int index);
+    void ActivatePickedTile(int index);
+    void BeginSelectedIconRemoval(HWND tile);
     void UpdateSelectedIconRemoval(POINT screenPoint);
     void FinishSelectedIconRemoval(bool accept);
-    void ClearPickedWindow();
     void UpdatePickOutline(HWND window);
     void HidePickOutline();
     void OnCopy();
@@ -102,10 +107,17 @@ private:
     HWND m_listenButton = nullptr;
     HWND m_settingsButton = nullptr;
     HWND m_pickWindowButton = nullptr;
-    HWND m_selectedWindowIconView = nullptr;
     HWND m_statusBar = nullptr;
+    struct PickedTile {
+        HWND hwnd = nullptr;
+        HWND source = nullptr;
+        HICON icon = nullptr;
+    };
+    // Index 0 keeps a stable window so an empty list can hide it instead of
+    // destroying it. Later picks are real windows stacked under that one.
+    std::vector<PickedTile> m_pickedTiles;
+    int m_removingPickedIndex = -1;
     HWND m_pickOutlineWindow = nullptr;
-    HICON m_pickedWindowIcon = nullptr;
     std::wstring m_statusText;
 
     WebInputPicker m_webInputPicker;
@@ -126,6 +138,11 @@ private:
     RECT m_splitterRect{};
     bool m_splitterDrag = false;
     int  m_splitterGrab = 0;  // cursor offset inside the strip when the drag began
+
+    // Grab strip on the right edge of the left panel.
+    RECT m_sideSplitterRect{};
+    bool m_sideSplitterDrag = false;
+    int  m_sideSplitterGrab = 0;
 
     CaptionView   m_view;
     CaptureEngine m_engine;

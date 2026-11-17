@@ -30,9 +30,16 @@ constexpr int kBarBottomPad = 5;
 constexpr int kBarHeight    = kBarTopPad + kRowHeight + kBarBottomPad;
 constexpr int kGap          = 6;
 constexpr int kSendWidth    = 92;
-// Full-height strip along the left edge, reserved for control buttons.
-constexpr int kSidePanelWidth = 45;
+// Left panel: the pick button and the selected tab (icon plus title). The
+// stored width starts here; dragging the panel's right edge changes it.
+constexpr int kMinSidePanelWidth = 56;
 constexpr int kSideButtonSize = 32;
+constexpr int kSideSplitterWidth = 6;
+// Narrowest caption column a side-panel drag may leave behind.
+constexpr int kMinColumnWidth = 320;
+constexpr int kTargetPad = 4;
+constexpr int kTargetIcon = 20;
+constexpr int kTargetGap = 6;
 // Extends the native title area into the client region. Besides creating
 // breathing room above the captions, this strip behaves like draggable title
 // bar space in normal view. Compact view intentionally omits it.
@@ -320,16 +327,19 @@ LRESULT CALLBACK MainWindow::SelectedIconSubclassProc(HWND hwnd, UINT message, W
 
     switch (message) {
         case WM_LBUTTONUP:
-            if (!self->m_selectedIconRemoveDrag && self->m_webInputPicker.SelectedWindow()) {
-                self->ActivatePickedWindow();
-                return 0;
+            if (!self->m_selectedIconRemoveDrag) {
+                const int index = self->PickedTileIndex(hwnd);
+                if (index >= 0 && index < self->m_webInputPicker.PickedCount()) {
+                    self->ActivatePickedTile(index);
+                    return 0;
+                }
             }
             break;
 
         case WM_RBUTTONDOWN:
-            if (self->m_webInputPicker.SelectedWindow()) {
+            if (self->PickedTileIndex(hwnd) >= 0 && self->m_webInputPicker.PickedCount() > 0) {
                 ::SetFocus(hwnd);
-                self->BeginSelectedIconRemoval();
+                self->BeginSelectedIconRemoval(hwnd);
                 return 0;
             }
             break;
@@ -359,7 +369,7 @@ LRESULT CALLBACK MainWindow::SelectedIconSubclassProc(HWND hwnd, UINT message, W
                 ::SetCursor(::LoadCursorW(nullptr, cursor));
                 return TRUE;
             }
-            if (self->m_webInputPicker.SelectedWindow()) {
+            if (self->PickedTileIndex(hwnd) >= 0 && self->m_webInputPicker.PickedCount() > 0) {
                 ::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
                 return TRUE;
             }
@@ -474,10 +484,15 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         case WM_SETCURSOR: {
             POINT pt{};
             if (LOWORD(lParam) == HTCLIENT && ::GetCursorPos(&pt) &&
-                ::ScreenToClient(m_hwnd, &pt) &&
-                (m_splitterDrag || ::PtInRect(&m_splitterRect, pt))) {
-                ::SetCursor(::LoadCursorW(nullptr, IDC_SIZENS));
-                return TRUE;
+                ::ScreenToClient(m_hwnd, &pt)) {
+                if (m_sideSplitterDrag || ::PtInRect(&m_sideSplitterRect, pt)) {
+                    ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEWE));
+                    return TRUE;
+                }
+                if (m_splitterDrag || ::PtInRect(&m_splitterRect, pt)) {
+                    ::SetCursor(::LoadCursorW(nullptr, IDC_SIZENS));
+                    return TRUE;
+                }
             }
             break;
         }
@@ -495,6 +510,12 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
 
         case WM_LBUTTONDOWN: {
             const POINT pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            if (::PtInRect(&m_sideSplitterRect, pt)) {
+                m_sideSplitterDrag = true;
+                m_sideSplitterGrab = pt.x - m_sideSplitterRect.left;
+                ::SetCapture(m_hwnd);
+                return 0;
+            }
             if (::PtInRect(&m_splitterRect, pt)) {
                 m_splitterDrag = true;
                 m_splitterGrab = pt.y - m_splitterRect.top;
@@ -505,6 +526,10 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
         }
 
         case WM_MOUSEMOVE:
+            if (m_sideSplitterDrag) {
+                DragSideSplitterTo(GET_X_LPARAM(lParam) - m_sideSplitterGrab);
+                return 0;
+            }
             if (m_splitterDrag) {
                 DragSplitterTo(GET_Y_LPARAM(lParam) - m_splitterGrab);
                 return 0;
@@ -512,7 +537,8 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             break;
 
         case WM_LBUTTONUP:
-            if (m_splitterDrag) {
+            if (m_sideSplitterDrag || m_splitterDrag) {
+                m_sideSplitterDrag = false;
                 m_splitterDrag = false;
                 ::ReleaseCapture();
                 return 0;
@@ -520,6 +546,7 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
             break;
 
         case WM_CAPTURECHANGED:
+            m_sideSplitterDrag = false;
             m_splitterDrag = false;
             return 0;
 
@@ -560,8 +587,7 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                 DrawDarkButton(*item);
                 return TRUE;
             }
-            if (item && item->CtlType == ODT_STATIC &&
-                item->hwndItem == m_selectedWindowIconView) {
+            if (item && item->CtlType == ODT_STATIC && PickedTileIndex(item->hwndItem) >= 0) {
                 DrawSelectedWindowIcon(*item);
                 return TRUE;
             }
@@ -679,9 +705,11 @@ LRESULT MainWindow::WndProc(UINT message, WPARAM wParam, LPARAM lParam) {
                 ::DestroyWindow(m_pickOutlineWindow);
                 m_pickOutlineWindow = nullptr;
             }
-            if (m_pickedWindowIcon) {
-                ::DestroyIcon(m_pickedWindowIcon);
-                m_pickedWindowIcon = nullptr;
+            for (PickedTile& tile : m_pickedTiles) {
+                if (tile.icon) {
+                    ::DestroyIcon(tile.icon);
+                    tile.icon = nullptr;
+                }
             }
             if (m_hotkeyRegistered) {
                 ::UnregisterHotKey(m_hwnd, HOTKEY_SEND);
@@ -750,17 +778,9 @@ bool MainWindow::CreateChildren() {
     m_listenButton      = button(L"Stop caption listening", IDC_BTN_LISTEN);
     m_settingsButton    = button(L"Settings", IDC_BTN_SETTINGS);
     m_pickWindowButton  = button(L"Pick up window", IDC_BTN_PICK_WINDOW);
-    m_selectedWindowIconView =
-        ::CreateWindowExW(0, WC_STATICW, L"",
-                          WS_CHILD | WS_CLIPSIBLINGS | SS_OWNERDRAW | SS_NOTIFY, 0, 0, 10, 10,
-                          m_hwnd,
-                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SELECTED_WINDOW)),
-                          m_instance, nullptr);
-    if (m_selectedWindowIconView &&
-        !::SetWindowSubclass(m_selectedWindowIconView, &MainWindow::SelectedIconSubclassProc,
-                             IDC_SELECTED_WINDOW, reinterpret_cast<DWORD_PTR>(this))) {
-        return false;
-    }
+    // The first tile is created hidden and kept for the life of the window.
+    // Further picks add tiles under it.
+    CreatePickedTile();
     if (m_pickWindowButton &&
         !::SetWindowSubclass(m_pickWindowButton, &MainWindow::PickButtonSubclassProc,
                              IDC_BTN_PICK_WINDOW, reinterpret_cast<DWORD_PTR>(this))) {
@@ -793,7 +813,7 @@ bool MainWindow::CreateChildren() {
 
     if (!m_sendButton || !m_saveButton || !m_clearButton || !m_listenButton ||
         !m_settingsButton || !m_pickWindowButton ||
-        !m_selectedWindowIconView || !m_fontCombo || !m_statusBar) {
+        m_pickedTiles.empty() || !m_fontCombo || !m_statusBar) {
         return false;
     }
 
@@ -849,11 +869,13 @@ void MainWindow::ApplyTheme() {
     DiscardThemeBrushes();
     EnsureThemeBrushes();
 
-    const HWND explorer[] = {m_pressEnterCheck,       m_hintLabel, m_rightPanel,
-                             m_bottomPanel,           m_statusBar, m_view.Handle(),
-                             m_selectedWindowIconView};
+    const HWND explorer[] = {m_pressEnterCheck, m_hintLabel, m_rightPanel,
+                             m_bottomPanel,     m_statusBar, m_view.Handle()};
     for (HWND control : explorer)
         TryDarkControlTheme(control, m_darkTheme ? L"DarkMode_Explorer" : L"Explorer");
+    for (const PickedTile& tile : m_pickedTiles) {
+        TryDarkControlTheme(tile.hwnd, m_darkTheme ? L"DarkMode_Explorer" : L"Explorer");
+    }
 
     const HWND combos[] = {m_fontCombo, m_sizeCombo, m_spacingCombo};
     for (HWND control : combos)
@@ -953,14 +975,20 @@ void MainWindow::DrawDarkButton(const DRAWITEMSTRUCT& item) const {
 }
 
 void MainWindow::DrawSelectedWindowIcon(const DRAWITEMSTRUCT& item) const {
+    const int index = PickedTileIndex(item.hwndItem);
+    if (index < 0) return;
+
     ::FillRect(item.hDC, &item.rcItem,
                m_buttonBrush ? m_buttonBrush
                              : reinterpret_cast<HBRUSH>(::GetStockObject(DKGRAY_BRUSH)));
 
+    const bool removingThis = m_selectedIconRemoveDrag && m_removingPickedIndex == index;
+    const bool active = index == m_webInputPicker.ActivePicked();
     const COLORREF borderColor =
-        m_selectedIconRemoveDrag && m_selectedIconOutside
+        removingThis && m_selectedIconOutside
             ? kPickOutline
-            : (m_darkTheme ? kButtonBorder : kLightButtonBorder);
+            : (active ? (m_darkTheme ? kTextPrimary : kLightTextPrimary)
+                      : (m_darkTheme ? kButtonBorder : kLightButtonBorder));
     const HPEN border = ::CreatePen(PS_SOLID, 1, borderColor);
     const HGDIOBJ oldPen = ::SelectObject(item.hDC, border);
     const HGDIOBJ oldBrush = ::SelectObject(item.hDC, ::GetStockObject(NULL_BRUSH));
@@ -969,11 +997,31 @@ void MainWindow::DrawSelectedWindowIcon(const DRAWITEMSTRUCT& item) const {
     ::SelectObject(item.hDC, oldPen);
     ::DeleteObject(border);
 
-    if (!m_pickedWindowIcon) return;
-    const int iconSize = std::max(Scaled(20), 16);
-    const int x = item.rcItem.left + ((item.rcItem.right - item.rcItem.left) - iconSize) / 2;
-    const int y = item.rcItem.top + ((item.rcItem.bottom - item.rcItem.top) - iconSize) / 2;
-    ::DrawIconEx(item.hDC, x, y, m_pickedWindowIcon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
+    const int pad = Scaled(kTargetPad);
+    const int iconSize = std::max(Scaled(kTargetIcon), 16);
+    const int gap = Scaled(kTargetGap);
+    const HICON icon = m_pickedTiles[static_cast<size_t>(index)].icon;
+    if (icon) {
+        ::DrawIconEx(item.hDC, item.rcItem.left + pad, item.rcItem.top + pad, icon, iconSize,
+                     iconSize, 0, nullptr, DI_NORMAL);
+    }
+
+    std::wstring title = m_webInputPicker.PickedName(index);
+    if (title.empty()) title = L"Untitled target";
+
+    RECT textRc = item.rcItem;
+    textRc.left += pad + (icon ? iconSize + gap : 0);
+    textRc.top += pad;
+    textRc.right -= pad;
+    textRc.bottom -= pad;
+    if (textRc.right <= textRc.left) return;
+
+    const HGDIOBJ oldFont = m_controlFont ? ::SelectObject(item.hDC, m_controlFont) : nullptr;
+    ::SetBkMode(item.hDC, TRANSPARENT);
+    ::SetTextColor(item.hDC, m_darkTheme ? kTextPrimary : kLightTextPrimary);
+    ::DrawTextW(item.hDC, title.c_str(), static_cast<int>(title.size()), &textRc,
+                DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS | DT_EDITCONTROL | DT_NOPREFIX);
+    if (oldFont) ::SelectObject(item.hDC, oldFont);
 }
 
 void MainWindow::DrawStatusPanel(const DRAWITEMSTRUCT& item) const {
@@ -1022,6 +1070,11 @@ void MainWindow::ApplyControlFont() {
                              m_sizeCombo,  m_spacingCombo,    m_statusBar};
     for (HWND control : controls) {
         if (control) ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(m_controlFont), TRUE);
+    }
+    for (const PickedTile& tile : m_pickedTiles) {
+        if (tile.hwnd) {
+            ::SendMessageW(tile.hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(m_controlFont), TRUE);
+        }
     }
 }
 
@@ -1072,14 +1125,23 @@ void MainWindow::PopulateSpacingCombo() {
 }
 
 void MainWindow::DrawSplitter(HDC dc) const {
-    if (!m_splitterBrush || ::IsRectEmpty(&m_splitterRect)) return;
-    // A hairline down the middle of the grab strip, so the strip reads as a
+    if (!m_splitterBrush) return;
+    // A hairline down the middle of each grab strip, so the strip reads as a
     // divider rather than as a gap.
     const int thickness = std::max(Scaled(1), 1);
-    RECT line = m_splitterRect;
-    line.top += (line.bottom - line.top - thickness) / 2;
-    line.bottom = line.top + thickness;
-    ::FillRect(dc, &line, m_splitterBrush);
+
+    if (!::IsRectEmpty(&m_splitterRect)) {
+        RECT line = m_splitterRect;
+        line.top += (line.bottom - line.top - thickness) / 2;
+        line.bottom = line.top + thickness;
+        ::FillRect(dc, &line, m_splitterBrush);
+    }
+    if (!::IsRectEmpty(&m_sideSplitterRect)) {
+        RECT line = m_sideSplitterRect;
+        line.left += (line.right - line.left - thickness) / 2;
+        line.right = line.left + thickness;
+        ::FillRect(dc, &line, m_splitterBrush);
+    }
 }
 
 // Keeps the bottom panel tall enough for its toolbar row and short enough to
@@ -1091,6 +1153,48 @@ int MainWindow::ClampBottomPanelHeight(int wanted, int clientHeight) const {
         clientHeight - titleBarExtension - LogBarHeight() - Scaled(kSplitterHeight) -
         Scaled(kMinViewHeight);
     return std::clamp(wanted, minimum, std::max(available, minimum));
+}
+
+int MainWindow::ClampSidePanelWidth(int wanted, int clientWidth) const {
+    const int minimum = Scaled(kMinSidePanelWidth);
+    const int available =
+        clientWidth - Scaled(kSideSplitterWidth) - Scaled(kMinColumnWidth);
+    return std::clamp(wanted, minimum, std::max(available, minimum));
+}
+
+int MainWindow::SelectedTargetHeight(int controlWidth, int index) const {
+    const int pad = Scaled(kTargetPad);
+    const int iconSize = std::max(Scaled(kTargetIcon), 16);
+    const int gap = Scaled(kTargetGap);
+    const bool hasIcon =
+        index >= 0 && index < static_cast<int>(m_pickedTiles.size()) &&
+        m_pickedTiles[static_cast<size_t>(index)].icon;
+    const int textWidth = std::max(controlWidth - pad - (hasIcon ? iconSize + gap : 0) - pad, 1);
+
+    std::wstring title = m_webInputPicker.PickedName(index);
+    if (title.empty()) title = L"Untitled target";
+
+    int textHeight = iconSize;
+    if (const HDC dc = ::GetDC(m_hwnd)) {
+        const HGDIOBJ previous = m_controlFont ? ::SelectObject(dc, m_controlFont) : nullptr;
+        RECT measured{0, 0, textWidth, 0};
+        ::DrawTextW(dc, title.c_str(), static_cast<int>(title.size()), &measured,
+                    DT_LEFT | DT_TOP | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX | DT_EDITCONTROL);
+        textHeight = std::max(static_cast<int>(measured.bottom - measured.top), 1);
+        if (previous) ::SelectObject(dc, previous);
+        ::ReleaseDC(m_hwnd, dc);
+    }
+    return std::max(iconSize, textHeight) + pad * 2;
+}
+
+void MainWindow::DragSideSplitterTo(int splitterLeft) {
+    RECT client{};
+    ::GetClientRect(m_hwnd, &client);
+    const int width = Unscaled(ClampSidePanelWidth(splitterLeft, client.right - client.left));
+    if (width == m_settings.sidePanelWidth) return;
+
+    m_settings.sidePanelWidth = width;
+    Layout();
 }
 
 void MainWindow::DragSplitterTo(int splitterTop) {
@@ -1135,11 +1239,12 @@ void MainWindow::Layout() {
     const int titleBarExtension = m_settings.compactView ? 0 : Scaled(kTitleBarExtension);
     const int barHeight = ClampBottomPanelHeight(Scaled(m_settings.bottomPanelHeight), clientHeight);
 
-    // The side panel runs down the left edge. Everything else stacks inside
-    // the column to its right: caption pane, splitter, bottom
-    // panel, log view.
-    const int sidePanelWidth = Scaled(kSidePanelWidth);
-    const int columnLeft = sidePanelWidth;
+    // The side panel runs down the left edge, with a drag strip on its right.
+    // Everything else stacks inside the column beside it: caption pane,
+    // splitter, bottom panel, log view.
+    const int sideSplitterWidth = Scaled(kSideSplitterWidth);
+    const int sidePanelWidth = ClampSidePanelWidth(Scaled(m_settings.sidePanelWidth), clientWidth);
+    const int columnLeft = sidePanelWidth + sideSplitterWidth;
     const int columnWidth = std::max(clientWidth - columnLeft, 0);
     const int logTop = std::max(clientHeight - logHeight, 0);
     const int barTop = std::max(logTop - barHeight, 0);
@@ -1147,6 +1252,8 @@ void MainWindow::Layout() {
     const int viewHeight = std::max(viewBottom - titleBarExtension, 0);
 
     m_splitterRect = RECT{columnLeft, viewBottom, clientWidth, barTop};
+    m_sideSplitterRect =
+        RECT{sidePanelWidth, titleBarExtension, columnLeft, clientHeight};
 
     if (m_view.Handle()) {
         ::SetWindowPos(m_view.Handle(), nullptr, columnLeft, titleBarExtension, columnWidth,
@@ -1164,17 +1271,34 @@ void MainWindow::Layout() {
                        std::max(clientHeight - titleBarExtension, 0), SWP_NOACTIVATE);
     }
 
-    // Left panel: picker at the top, selected target beneath it.
+    // Left panel: picker at the top, then one tile per picked tab, newest last.
     const int buttonSize = Scaled(kSideButtonSize);
     const int buttonLeft = std::max((sidePanelWidth - buttonSize) / 2, 0);
     if (m_pickWindowButton) {
         ::SetWindowPos(m_pickWindowButton, nullptr, buttonLeft, titleBarExtension + pad,
                        buttonSize, buttonSize, SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    if (m_selectedWindowIconView) {
-        ::SetWindowPos(m_selectedWindowIconView, nullptr, buttonLeft,
-                       titleBarExtension + pad + buttonSize + gap, buttonSize, buttonSize,
+    const int chipPad = Scaled(kTargetPad);
+    const int chipWidth = std::max(sidePanelWidth - chipPad * 2, 0);
+    int chipTop = titleBarExtension + pad + buttonSize + gap;
+    const int pickedCount = m_webInputPicker.PickedCount();
+    for (int index = 0; index < static_cast<int>(m_pickedTiles.size()); ++index) {
+        HWND tile = m_pickedTiles[static_cast<size_t>(index)].hwnd;
+        if (!tile) continue;
+        if (index >= pickedCount) {
+            ::ShowWindow(tile, SW_HIDE);
+            continue;
+        }
+        const int available = clientHeight - chipTop - pad;
+        if (chipWidth <= 0 || available < Scaled(kTargetIcon)) {
+            ::ShowWindow(tile, SW_HIDE);
+            continue;
+        }
+        const int chipHeight = std::min(SelectedTargetHeight(chipWidth, index), available);
+        ::SetWindowPos(tile, nullptr, chipPad, chipTop, chipWidth, chipHeight,
                        SWP_NOZORDER | SWP_NOACTIVATE);
+        ::ShowWindow(tile, SW_SHOWNOACTIVATE);
+        chipTop += chipHeight + gap;
     }
     // The toolbar hugs the foot of the bottom panel. A taller panel then opens
     // space under the splitter rather than carrying the controls up with it, so
@@ -1616,18 +1740,17 @@ void MainWindow::FinishWindowPick(bool accept) {
     if (::GetCapture() == m_pickWindowButton) ::ReleaseCapture();
     ::SendMessageW(m_pickWindowButton, BM_SETSTATE, FALSE, 0);
 
+    const int pickedBefore = m_webInputPicker.PickedCount();
     if (accept && IsPickableState(m_windowPickState) && m_webInputPicker.CommitCandidate()) {
-        UpdatePickedWindowIcon(m_webInputPicker.SelectedWindow());
+        const bool added = m_webInputPicker.PickedCount() > pickedBefore;
+        RefreshPickedTiles();
         UpdateWindowTitle();
 
-        std::wstring accessibleName = L"Selected window: ";
-        accessibleName += m_webInputPicker.SelectedName();
-        ::SetWindowTextW(m_selectedWindowIconView, accessibleName.c_str());
-        ::ShowWindow(m_selectedWindowIconView, SW_SHOWNOACTIVATE);
-        ::InvalidateRect(m_selectedWindowIconView, nullptr, TRUE);
-
-        std::wstring status = L"Picked web tab: ";
-        status += m_webInputPicker.SelectedName();
+        const std::wstring& pickedName = m_webInputPicker.CandidateName().empty()
+                                              ? m_webInputPicker.SelectedName()
+                                              : m_webInputPicker.CandidateName();
+        std::wstring status = added ? L"Added web tab: " : L"Picked web tab: ";
+        status += pickedName;
         status += L".";
         SetStatus(status);
     } else if (!accept) {
@@ -1671,16 +1794,87 @@ void MainWindow::ShowWindowPickStatus(WebInputPickState state) {
     }
 }
 
-void MainWindow::UpdatePickedWindowIcon(HWND window) {
-    HICON icon = CopyWindowIcon(window);
-    if (!icon) return;
-    if (m_pickedWindowIcon) ::DestroyIcon(m_pickedWindowIcon);
-    m_pickedWindowIcon = icon;
+int MainWindow::PickedTileIndex(HWND tile) const {
+    for (int index = 0; index < static_cast<int>(m_pickedTiles.size()); ++index) {
+        if (m_pickedTiles[static_cast<size_t>(index)].hwnd == tile) return index;
+    }
+    return -1;
 }
 
-void MainWindow::ActivatePickedWindow() {
+bool MainWindow::CreatePickedTile() {
+    const int index = static_cast<int>(m_pickedTiles.size());
+    const int controlId = index == 0 ? IDC_SELECTED_WINDOW : 1200 + index;
+    HWND tile = ::CreateWindowExW(0, WC_STATICW, L"",
+                                  WS_CHILD | WS_CLIPSIBLINGS | SS_OWNERDRAW | SS_NOTIFY | SS_NOPREFIX,
+                                  0, 0, 10, 10, m_hwnd,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
+                                  m_instance, nullptr);
+    if (!tile) return false;
+    if (!::SetWindowSubclass(tile, &MainWindow::SelectedIconSubclassProc,
+                             static_cast<UINT_PTR>(controlId), reinterpret_cast<DWORD_PTR>(this))) {
+        ::DestroyWindow(tile);
+        return false;
+    }
+    TryDarkControlTheme(tile, m_darkTheme ? L"DarkMode_Explorer" : L"Explorer");
+    if (m_controlFont) {
+        ::SendMessageW(tile, WM_SETFONT, reinterpret_cast<WPARAM>(m_controlFont), TRUE);
+    }
+    m_pickedTiles.push_back(PickedTile{tile, nullptr, nullptr});
+    return true;
+}
+
+void MainWindow::BindPickedTile(int index) {
+    if (index < 0 || index >= static_cast<int>(m_pickedTiles.size())) return;
+    PickedTile& tile = m_pickedTiles[static_cast<size_t>(index)];
+    const HWND source = m_webInputPicker.PickedWindow(index);
+    if (tile.source != source) {
+        if (tile.icon) {
+            ::DestroyIcon(tile.icon);
+            tile.icon = nullptr;
+        }
+        tile.icon = source ? CopyWindowIcon(source) : nullptr;
+        tile.source = source;
+    }
+
+    std::wstring accessibleName = L"Selected window: ";
+    accessibleName += m_webInputPicker.PickedName(index);
+    ::SetWindowTextW(tile.hwnd, accessibleName.c_str());
+    ::InvalidateRect(tile.hwnd, nullptr, TRUE);
+}
+
+void MainWindow::RefreshPickedTiles() {
+    const int count = m_webInputPicker.PickedCount();
+    while (static_cast<int>(m_pickedTiles.size()) > std::max(count, 1)) {
+        PickedTile& extra = m_pickedTiles.back();
+        if (extra.icon) ::DestroyIcon(extra.icon);
+        if (extra.hwnd) ::DestroyWindow(extra.hwnd);
+        m_pickedTiles.pop_back();
+    }
+    while (static_cast<int>(m_pickedTiles.size()) < std::max(count, 1) && CreatePickedTile()) {
+    }
+
+    for (int index = 0; index < count; ++index) BindPickedTile(index);
+    if (count == 0 && !m_pickedTiles.empty()) {
+        PickedTile& first = m_pickedTiles.front();
+        if (first.icon) {
+            ::DestroyIcon(first.icon);
+            first.icon = nullptr;
+        }
+        first.source = nullptr;
+        ::SetWindowTextW(first.hwnd, L"");
+        ::ShowWindow(first.hwnd, SW_HIDE);
+    }
+    Layout();
+}
+
+void MainWindow::ActivatePickedTile(int index) {
     std::wstring error;
-    if (!m_webInputPicker.ActivateSelectedWindow(error)) {
+    const bool ok = m_webInputPicker.ActivatePicked(index, error);
+    UpdateWindowTitle();
+    for (const PickedTile& tile : m_pickedTiles) {
+        if (tile.hwnd) ::InvalidateRect(tile.hwnd, nullptr, TRUE);
+    }
+    if (!ok) {
         SetStatus(error.empty() ? L"Could not bring the picked tab to the front." : error);
         return;
     }
@@ -1691,15 +1885,17 @@ void MainWindow::ActivatePickedWindow() {
     SetStatus(status);
 }
 
-void MainWindow::BeginSelectedIconRemoval() {
-    if (m_selectedIconRemoveDrag || !m_webInputPicker.SelectedWindow()) return;
+void MainWindow::BeginSelectedIconRemoval(HWND tile) {
+    const int index = PickedTileIndex(tile);
+    if (m_selectedIconRemoveDrag || index < 0 || index >= m_webInputPicker.PickedCount()) return;
     m_selectedIconRemoveDrag = true;
     m_selectedIconOutside = false;
-    ::SetCapture(m_selectedWindowIconView);
+    m_removingPickedIndex = index;
+    ::SetCapture(tile);
 
     POINT point{};
     if (::GetCursorPos(&point)) UpdateSelectedIconRemoval(point);
-    SetStatus(L"Right-drag the selected icon outside this app and release to remove it.");
+    SetStatus(L"Right-drag this tab outside the app and release to remove it.");
 }
 
 void MainWindow::UpdateSelectedIconRemoval(POINT screenPoint) {
@@ -1709,39 +1905,40 @@ void MainWindow::UpdateSelectedIconRemoval(POINT screenPoint) {
         !::GetWindowRect(m_hwnd, &appBounds) || !::PtInRect(&appBounds, screenPoint);
     if (outside != m_selectedIconOutside) {
         m_selectedIconOutside = outside;
-        ::InvalidateRect(m_selectedWindowIconView, nullptr, TRUE);
-        SetStatus(outside ? L"Release to remove the selected window."
-                          : L"Drag outside this app to remove the selected window.");
+        if (m_removingPickedIndex >= 0 &&
+            m_removingPickedIndex < static_cast<int>(m_pickedTiles.size())) {
+            ::InvalidateRect(m_pickedTiles[static_cast<size_t>(m_removingPickedIndex)].hwnd, nullptr,
+                             TRUE);
+        }
+        SetStatus(outside ? L"Release to remove this tab."
+                          : L"Drag outside this app to remove this tab.");
     }
     ::SetCursor(::LoadCursorW(nullptr, outside ? IDC_HAND : IDC_SIZEALL));
 }
 
 void MainWindow::FinishSelectedIconRemoval(bool accept) {
     if (!m_selectedIconRemoveDrag) return;
-    const bool remove = accept && m_selectedIconOutside;
+    const int index = m_removingPickedIndex;
+    const bool remove = accept && m_selectedIconOutside && index >= 0;
+    HWND captured = nullptr;
+    if (index >= 0 && index < static_cast<int>(m_pickedTiles.size())) {
+        captured = m_pickedTiles[static_cast<size_t>(index)].hwnd;
+    }
     m_selectedIconRemoveDrag = false;
     m_selectedIconOutside = false;
-    if (::GetCapture() == m_selectedWindowIconView) ::ReleaseCapture();
-    ::InvalidateRect(m_selectedWindowIconView, nullptr, TRUE);
+    m_removingPickedIndex = -1;
+    if (captured && ::GetCapture() == captured) ::ReleaseCapture();
 
     if (remove) {
-        ClearPickedWindow();
-        SetStatus(L"Selected window removed.");
+        m_webInputPicker.RemovePicked(index);
+        RefreshPickedTiles();
+        UpdateWindowTitle();
+        SetStatus(L"Selected tab removed.");
     } else {
-        SetStatus(L"Selected-window removal cancelled.");
-    }
-}
-
-void MainWindow::ClearPickedWindow() {
-    m_webInputPicker.ClearSelected();
-    UpdateWindowTitle();
-    if (m_pickedWindowIcon) {
-        ::DestroyIcon(m_pickedWindowIcon);
-        m_pickedWindowIcon = nullptr;
-    }
-    if (m_selectedWindowIconView) {
-        ::SetWindowTextW(m_selectedWindowIconView, L"");
-        ::ShowWindow(m_selectedWindowIconView, SW_HIDE);
+        for (const PickedTile& tile : m_pickedTiles) {
+            if (tile.hwnd) ::InvalidateRect(tile.hwnd, nullptr, TRUE);
+        }
+        SetStatus(L"Tab removal cancelled.");
     }
 }
 

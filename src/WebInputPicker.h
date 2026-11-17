@@ -59,6 +59,19 @@ public:
     const std::wstring& SelectedName() const;
     void ClearSelected();
 
+    // Picked tabs are kept in the order they were added. A new pick is appended
+    // under the ones already kept and does not steal the active tab. Picking a
+    // tab that is already in the list refreshes that entry instead of
+    // duplicating it. The active entry is the one Send uses.
+    int PickedCount() const;
+    HWND PickedWindow(int index) const;
+    const std::wstring& PickedName(int index) const;
+    int ActivePicked() const;
+    // Drops one kept tab. The active tab stays put unless it was the one removed.
+    void RemovePicked(int index);
+    // Makes one kept tab the Send target and brings its browser tab forward.
+    bool ActivatePicked(int index, std::wstring& error);
+
     // Selects the retained browser tab when possible, restores its window, and
     // brings it to the foreground without focusing or changing the picked input.
     bool ActivateSelectedWindow(std::wstring& error);

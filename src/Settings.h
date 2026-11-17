@@ -46,6 +46,9 @@ struct Settings {
     // window has left over, so dragging the splitter changes this.
     int bottomPanelHeight = 32;
 
+    // Width of the left panel at 96 dpi. Dragging its splitter changes this.
+    int sidePanelWidth = 72;
+
     void Load();
     void Save() const;
 

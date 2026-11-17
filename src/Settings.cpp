@@ -94,6 +94,9 @@ void Settings::Load() {
     // down to the single-row fit.
     if (bottomPanelHeight == 58 || bottomPanelHeight == 38) bottomPanelHeight = 32;
     if (bottomPanelHeight < 32 || bottomPanelHeight > 2000) bottomPanelHeight = 32;
+
+    sidePanelWidth = ReadInt(L"SidePanelWidth", sidePanelWidth, file);
+    if (sidePanelWidth < 56 || sidePanelWidth > 2000) sidePanelWidth = 72;
 }
 
 void Settings::Save() const {
@@ -125,4 +128,5 @@ void Settings::Save() const {
     WriteInt(L"WindowW", windowW, file);
     WriteInt(L"WindowH", windowH, file);
     WriteInt(L"BottomPanelHeight", bottomPanelHeight, file);
+    WriteInt(L"SidePanelWidth", sidePanelWidth, file);
 }
